@@ -1,0 +1,21 @@
+# Coverage gate (github.com/vladopajic/go-test-coverage). The profile is
+# produced by `go test -race -coverprofile=coverage.out ./...`.
+#
+# The gate is 100%: every statement under internal/ is exercised by tests.
+# Hard-to-reach error arms are covered through fault-injection seams, not
+# `// coverage-ignore` annotations. See COVERAGE.md for the policy.
+profile: coverage.out
+
+# If a `// coverage-ignore` ever appears it MUST carry an explanation — but
+# the standing policy is that none exist at all.
+force-annotation-comment: true
+
+threshold:
+  # Statement coverage. 100 — no skipped lines.
+  total: 100
+
+exclude:
+  paths:
+    # Process entrypoint — binds the CLI to the real process (argv, signals,
+    # the browser); everything it calls is tested.
+    - ^cmd/

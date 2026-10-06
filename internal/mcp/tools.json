@@ -1,0 +1,1061 @@
+[
+  {
+    "name": "post_message",
+    "description": "Post your reply into the chat thread you were invoked from. Use this to deliver your answer or a substantial partial result. Posts are capped per task — prefer one useful message over many partial ones. Writing another agent's name as @name (e.g. \"@qib\") hands them the turn: they will be invoked and see your message. Only mention an agent when you want them to respond.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string",
+          "description": "Message text (markdown)."
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_thread",
+    "description": "Re-read the conversation thread. Use when you need messages beyond the context you were given, or to check whether the thread moved while you were working. Each line is [m:<messageID>] <author> (<human|agent>) <time>: <text>.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "get_context",
+    "description": "Re-read your FULL context document, assembled fresh: the task, the shared context items for this channel, what other agents concluded in this thread, and the thread itself. Use when you have been working long enough that your starting context may be stale. For just the newest messages, get_thread is cheaper.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "write_shared_context",
+    "description": "Store one durable fact, decision, or constraint in this channel's shared context, where EVERY future agent run in this channel will see it. Use sparingly — only for conclusions worth remembering beyond this thread, not for progress notes (post_message) or your answer. Items are small (≤2KB) and the channel holds at most 50.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string",
+          "description": "The fact to remember (markdown, ≤2KB)."
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "Pin so it survives context trimming. Reserve for hard constraints."
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "request_approval",
+    "description": "Ask the human who invoked you to approve a consequential action BEFORE taking it — e.g. posting to a wide audience, or anything they might reasonably want to veto. BLOCKS until they approve, deny, or the request times out (a timeout is a denial). Use sparingly; routine replies need no approval.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "One or two sentences: exactly what you want to do and why."
+        },
+        "risk": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high"
+          ],
+          "description": "Your assessment of the blast radius."
+        }
+      },
+      "required": [
+        "summary"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "publish_artifact",
+    "description": "Publish a document too long or too durable for a chat message — a full draft, report, or diff. It is stored on the run and viewable in its activity drawer. Post a SHORT summary with post_message and mention the artifact title; do not paste the whole document into chat. Max 64KB, a few per run.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Content kind, e.g. \"markdown\", \"diff\", \"text\"."
+        },
+        "title": {
+          "type": "string",
+          "description": "Short human-readable title."
+        },
+        "content": {
+          "type": "string",
+          "description": "The full document."
+        }
+      },
+      "required": [
+        "title",
+        "content"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_skills",
+    "description": "List the workspace skill packs — named instruction sets your team curated for recurring tasks (release notes format, review checklist, …). Check here when the task sounds like something the team does routinely; follow up with invoke_skill to pull in the one that fits.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "invoke_skill",
+    "description": "Fetch one skill's full instructions by id (from list_skills) and follow them for the current task. The invocation is recorded on the run timeline.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "skillID": {
+          "type": "string",
+          "description": "The skill id from list_skills."
+        }
+      },
+      "required": [
+        "skillID"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_channels",
+    "description": "List the channels your invoker is a member of — the places you can read and post with their access. Lines are [ch:<channelID>] ~name (public|private).",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_channel",
+    "description": "Create a new channel in the workspace, as your invoker (their access level applies — guests cannot create channels). Consider request_approval first unless they explicitly asked you to create it.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Channel name."
+        },
+        "description": {
+          "type": "string"
+        },
+        "private": {
+          "type": "boolean",
+          "description": "Private channel (default public)."
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "join_channel",
+    "description": "Join your invoker to a public channel by [ch:<id>] so you can read/post there.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "channelID": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "channelID"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_channel",
+    "description": "Read a channel (one your invoker is in) by [ch:<id>]. Without thread: recent TOP-LEVEL messages only — replies are hidden, [thread: N replies] marks where they live. With thread (any message id from that thread; a permalink's #msg-<id> works too): that thread's actual messages. When a task points at a message or thread, read it here directly — do not reconstruct it from search. Same [m:<id>] line format as get_thread.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "channelID": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string",
+          "description": "Any message id inside the thread to read; omit for the channel top level."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max messages (≤50)."
+        }
+      },
+      "required": [
+        "channelID"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_pins",
+    "description": "List a channel's pinned messages — the durable decisions, links and reference posts members chose to keep visible. Check pins before asking a human for standing facts about a channel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "channelID": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "channelID"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "read_dm",
+    "description": "Read your INVOKER's own direct-message history with one user (they already see it in the app). Use it when the task references something said in a DM; accepts the same thread narrowing as read_channel.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userID": {
+          "type": "string",
+          "description": "The other participant's user id."
+        },
+        "thread": {
+          "type": "string",
+          "description": "Optional message id inside a DM thread."
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max messages (≤50)."
+        }
+      },
+      "required": [
+        "userID"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "post_to_channel",
+    "description": "Post a message into a channel by [ch:<id>] your invoker is a member of (any channel, including your current one). To answer a message that was asked in a THREAD, pass thread_root = that message's [m:<id>] so your reply lands in the thread, not at the top level. For replying in the exact thread you were invoked from, post_message is simpler. Shares your per-task post cap.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "channelID": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string",
+          "description": "Message text (markdown)."
+        },
+        "thread_root": {
+          "type": "string",
+          "description": "Message ID to reply under (the thread root). Omit to post at the top level."
+        }
+      },
+      "required": [
+        "channelID",
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "search_messages",
+    "description": "Full-text search across all history your invoker can see — for DISCOVERY, when you have no handle on where something lives. When you already hold a message id, permalink, channel or user, read the source directly (read_channel / read_dm / read_pins) instead: search returns scattered single messages, never a whole conversation. Returns [m:<id>] (in <channelID>) snippets.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string"
+        },
+        "limit": {
+          "type": "number",
+          "description": "Max hits (≤20)."
+        }
+      },
+      "required": [
+        "query"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "add_reaction",
+    "description": "React to a message [m:<id>] with a normal emoji (e.g. 👍 🎉). Defaults to the thread you were invoked in; pass channelID when reacting elsewhere. Status emojis (👀⚙️✅…) are reserved — use set_state for those.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "messageID": {
+          "type": "string"
+        },
+        "emoji": {
+          "type": "string",
+          "description": "The emoji character itself."
+        },
+        "channelID": {
+          "type": "string",
+          "description": "Only when the message is in another channel."
+        }
+      },
+      "required": [
+        "messageID",
+        "emoji"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_users",
+    "description": "Search the workspace directory by name. Returns [u:<userID>] Name lines — the IDs feed send_dm; the names can be @mentioned in posts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "query": {
+          "type": "string",
+          "description": "Name fragment; empty lists everyone."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "send_dm",
+    "description": "Send a direct message to one user [u:<id>], in the DM between THEM and YOUR INVOKER (you post as yourself, on the invoker's behalf — the recipient sees who asked). Shares your per-task post cap. Consider request_approval first unless the invoker explicitly asked you to DM someone.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "userID": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string",
+          "description": "Message text (markdown)."
+        }
+      },
+      "required": [
+        "userID",
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "reconnect_connector",
+    "description": "Ask your invoker to reconnect a connector whose session or token has expired. This CHECKS the connector first: if it is still working you are told so — say that rather than sending them to re-do a sign-in they do not need. You cannot reconnect anything yourself; the credential is theirs and renewing it means them signing in. Use it when a connector you need is missing from the task or its calls come back 401/403. Nothing opens on their screen by itself: the sign-in happens in Connectors, so tell them to go there and press Reconnect.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "connector": {
+          "type": "string",
+          "description": "Connector slug, e.g. cliffhub."
+        }
+      },
+      "required": [
+        "connector"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "disconnect_connector",
+    "description": "Remove your invoker's connection to a connector. Only when they ask for it — it stops every agent using that service for them, and reconnecting means them signing in again.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "connector": {
+          "type": "string",
+          "description": "Connector slug, e.g. cliffhub."
+        }
+      },
+      "required": [
+        "connector"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "propose_reply",
+    "description": "Draft a reply for your CREATOR to approve, edit, or cancel — the reply-mode watcher path. You do NOT post; on approval the system posts your text (or their edit) in the thread. Pass the full reply as `text`, and thread_root = the [m:<id>] of the message you are answering so it lands in that thread. Use this instead of post_message when you are a reply-mode watcher.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "text": {
+          "type": "string",
+          "description": "The full drafted reply (markdown)."
+        },
+        "thread_root": {
+          "type": "string",
+          "description": "Message ID of the thread to reply in (the question's [m:<id>])."
+        },
+        "reply_to": {
+          "type": "string",
+          "description": "Optional: the [m:<id>] you are answering, shown to your creator for context."
+        }
+      },
+      "required": [
+        "text"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "fetch_spill",
+    "description": "Read more of a SPILLED tool result. When a tool returns too much to show inline, you get a preview plus a locator like sp-3 — the full data is stored for this run. Fetch the part you need by character offset (each call returns up to 16384 chars and tells you the next offset). Fetch only what the task requires; do not page through everything by default.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "locator": {
+          "type": "string",
+          "description": "The spill locator from the preview, e.g. \"sp-3\"."
+        },
+        "offset": {
+          "type": "number",
+          "description": "Character offset to read from (default 0)."
+        },
+        "length": {
+          "type": "number",
+          "description": "Chars to read (default and max 16384)."
+        }
+      },
+      "required": [
+        "locator"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "use_connector",
+    "description": "Attach one of the invoker's INSTALLED connectors (listed in your context under \"Installed connectors\") to this task, when the task clearly needs that external service and it was not already attached. Give the slug and a one-line reason — the invoker may be asked to approve. On success you get the service map inline and connector_lookup/connector_call work — go straight to connector_lookup with words from the question. Do NOT use this for services that are not in the installed list.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "connector": {
+          "type": "string",
+          "description": "Installed connector slug, e.g. 'cliffhub'."
+        },
+        "reason": {
+          "type": "string",
+          "description": "One line: why this task needs the service."
+        }
+      },
+      "required": [
+        "connector",
+        "reason"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "connector_call",
+    "description": "Call a connected external service API (the /connector picked for this task). This is the ONLY way to reach these services — auth is handled for you, no shell or curl needed, and no approval is required for reads. Find the endpoint with connector_lookup FIRST (it returns the contract block and the valid enum values), then call it. Large JSON responses are SAVED TO A LOCAL FILE — the result shows pagination meta + key shape only; extract the fields you need from the saved file with capped shell commands, and take counts from meta (never read the whole file). Use query for query-string params (filters, per_page — keep pages small) and body for JSON bodies. Destructive calls (DELETE, or anything the docs mark irreversible) need request_approval FIRST.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "connector": {
+          "type": "string",
+          "description": "Connector slug, e.g. 'cliffhub'."
+        },
+        "method": {
+          "type": "string",
+          "description": "HTTP method (GET default, POST, PATCH, PUT, DELETE)."
+        },
+        "path": {
+          "type": "string",
+          "description": "Endpoint path exactly as in the docs, e.g. 'api/people/employees'."
+        },
+        "query": {
+          "type": "object",
+          "description": "Query-string parameters as string values.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "body": {
+          "type": "object",
+          "description": "JSON request body for POST/PATCH/PUT."
+        }
+      },
+      "required": [
+        "connector",
+        "path"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "connector_lookup",
+    "description": "Find endpoints in an ATTACHED connector and read their contracts in ONE step — replaces grepping _catalog.tsv, reading service .yaml files and _enums.yaml by hand. Pass query (words from the question) to search the catalog: you get the matching rows (route_id, METHOD path, side effects, summary); a query with exactly one hit also returns that endpoint's full contract block with every enum it references inlined. Pass route_id to get the contract of a specific endpoint. Optional service scopes the search to one route prefix (e.g. \"meetings\"). Internal (machine-to-machine) endpoints are never returned.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "connector": {
+          "type": "string",
+          "description": "Attached connector slug, e.g. 'cliffhub'."
+        },
+        "query": {
+          "type": "string",
+          "description": "Words from the question, e.g. 'meetings today calendar'."
+        },
+        "route_id": {
+          "type": "string",
+          "description": "Exact route id from the catalog, e.g. 'meetings.upcoming'."
+        },
+        "service": {
+          "type": "string",
+          "description": "Optional route prefix to scope the search, e.g. 'one_on_ones'."
+        }
+      },
+      "required": [
+        "connector"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "link_message",
+    "description": "Turn a message reference into a CLICKABLE permalink you can paste into your reply. Give the message_id (a bare id or an [m:<id>] marker). It links a message in your CURRENT channel by default; pass channel_id ([ch:<id>]) or conversation_id to link one elsewhere, and thread_root if it lives in a thread. Returns a URL that renders as a quoted-message card in chat — ALWAYS prefer this over pasting a raw [m:<id>] marker when a human asked for a link.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string",
+          "description": "The message to link (bare id or [m:<id>])."
+        },
+        "channel_id": {
+          "type": "string",
+          "description": "Optional channel ([ch:<id>]) if not the current one."
+        },
+        "conversation_id": {
+          "type": "string",
+          "description": "Optional DM/conversation id if linking a DM."
+        },
+        "thread_root": {
+          "type": "string",
+          "description": "Optional [m:<id>] of the thread root, if the message is a reply."
+        }
+      },
+      "required": [
+        "message_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "notify_owner",
+    "description": "Send a PRIVATE heads-up to YOUR CREATOR (the person you run for) — lands in your DM with them, never in the watched channel. This is how a watcher \"DMs me\". In notify/draft mode this is the only way to communicate; public posts are blocked.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "body": {
+          "type": "string",
+          "description": "The message to your creator (markdown)."
+        }
+      },
+      "required": [
+        "body"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_reminder",
+    "description": "Set a reminder for YOUR INVOKER — it fires into their activity + notifications at the given time, anchored to a message in this thread. Give in_minutes (minutes from now) OR remind_at (RFC3339 UTC). Defaults to the message that invoked you; pass message_id to anchor a different one. This is the invoker's own reminder, not a message to them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "in_minutes": {
+          "type": "number",
+          "description": "Minutes from now, e.g. 5."
+        },
+        "remind_at": {
+          "type": "string",
+          "description": "Absolute time, RFC3339 e.g. 2026-08-13T15:04:05Z."
+        },
+        "message_id": {
+          "type": "string",
+          "description": "Message to remind about; defaults to the invoking message."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_reminders",
+    "description": "List your invoker's pending reminders as [rem:<id>] time — preview lines.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "cancel_reminder",
+    "description": "Cancel one of your invoker's pending reminders by its [rem:<id>].",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "reminder_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "reminder_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "list_schedules",
+    "description": "List YOUR INVOKER's scheduled orders across every agent: [sch:<id>] agent — when → where — instruction. Use this, never a cron or routine feature of your own, when they ask what they have scheduled.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {},
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_schedule",
+    "description": "Create a SCHEDULED ORDER for your invoker — an agent carries out `instruction` on a clock. `schedule` is five-field cron (minute hour day-of-month month day-of-week), e.g. \"0 9 * * 1-5\" = 09:00 on weekdays. `timezone` is IANA (e.g. Asia/Kolkata); it defaults to their profile zone, or UTC if they have none, so pass it whenever they said a local time. `destination`: \"here\" (default — this conversation), \"dm\" (a private DM to them) or a channel id [ch:<id>] they're in. `agent` defaults to you. Only for recurring work they asked for; confirm the time back to them.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "instruction": {
+          "type": "string",
+          "description": "What the agent should do each time it fires."
+        },
+        "schedule": {
+          "type": "string",
+          "description": "Five-field cron spec."
+        },
+        "timezone": {
+          "type": "string",
+          "description": "IANA timezone, e.g. Asia/Kolkata."
+        },
+        "destination": {
+          "type": "string",
+          "description": "\"here\", \"dm\", or a channel id."
+        },
+        "agent": {
+          "type": "string",
+          "description": "Agent slug to carry it out; defaults to you."
+        },
+        "connectors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Connector slugs to pin."
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Skill ids [sk:<id>] to pin."
+        }
+      },
+      "required": [
+        "instruction",
+        "schedule"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "delete_schedule",
+    "description": "Remove one of your invoker's scheduled orders by its [sch:<id>] from list_schedules.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "schedule_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "schedule_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "pin_message",
+    "description": "Pin (or unpin) a message [m:<id>] in the thread you were invoked in, on the invoker's behalf. Pass pinned:false to unpin.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "pinned": {
+          "type": "boolean",
+          "description": "true to pin (default), false to unpin."
+        }
+      },
+      "required": [
+        "message_id"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "ask_user",
+    "description": "Ask the human who invoked you to pick ONE option when a decision is genuinely theirs — a tradeoff you cannot resolve from the thread (e.g. \"quick summary vs full report\", \"claude vs codex\"). BLOCKS until they choose or it times out. 2–5 short options. Do not use it for questions the thread already answers.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "question": {
+          "type": "string",
+          "description": "The question, one or two sentences."
+        },
+        "options": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "maxItems": 5,
+          "description": "Mutually exclusive answers, ≤120 chars each."
+        }
+      },
+      "required": [
+        "question",
+        "options"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "approval_prompt",
+    "description": "Internal permission gateway used by the harness for tool-permission prompts. Do not call directly — use request_approval for your own approval needs.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "tool_name": {
+          "type": "string"
+        },
+        "input": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "tool_use_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "tool_name",
+        "input"
+      ],
+      "additionalProperties": true
+    }
+  },
+  {
+    "name": "claim_task",
+    "description": "Atomically lock one part of a shared task. MANDATORY whenever several agents were invoked together and the task divides into parts: claim BEFORE working or announcing anything, with a short label from the task's own words (e.g. \"hindi\", \"auth.go\"). First claim wins and the result is the only source of truth for who does what — if your label is taken, claim a different remaining part. Never state which part you took without holding its claim.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Short name for the part you are taking (≤64 chars)."
+        }
+      },
+      "required": [
+        "label"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "update_memory",
+    "description": "Replace your core memory for THIS invoker — a small private document injected into every future task you run for them. Keep it under ~8KB: durable preferences, ongoing projects, sharp lessons. Rewrite the WHOLE document (this replaces, not appends); evict finished work. Update it when you learn something that will matter beyond this task.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "content": {
+          "type": "string",
+          "description": "The complete new memory document (markdown)."
+        }
+      },
+      "required": [
+        "content"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "create_coding_task",
+    "description": "Open a CODING TASK (fix a bug, build a feature, do a chore) for a PRODUCT — the only way to start coding work. project is the product name (\"CliffHub\"), NOT a repo path; repos are the GitLab repositories that make it up, each with a role (frontend, backend, …). Products usually span backend AND frontend — include both unless the ask is clearly one-sided. A product listed under \"# Known coding projects\" needs no repos (they are on record); a new one does — if you cannot name them, ask_user first, never guess. The server creates/reuses the requester's own private project channel (~product-<their name>, shared only by invite), posts a pinned task card whose thread is the task's home, links back here, and starts the dev agent's task run there with every repo checked out. After it returns, END your turn without posting.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "project": {
+          "type": "string",
+          "description": "The PRODUCT name, e.g. \"CliffHub\" or \"Booking Portal\" (not a repo path)."
+        },
+        "repos": {
+          "type": "array",
+          "description": "The product's GitLab repos with roles. Required for a product Ex has not seen; optional afterwards.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "description": "GitLab path, e.g. \"acme/web/shop-frontend\"."
+              },
+              "role": {
+                "type": "string",
+                "enum": [
+                  "frontend",
+                  "backend",
+                  "mobile",
+                  "infra",
+                  "other"
+                ]
+              },
+              "base_branch": {
+                "type": "string",
+                "description": "Base branch for this repo; omit for its default."
+              }
+            },
+            "required": [
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "title": {
+          "type": "string",
+          "description": "Short task title (≤120 chars), e.g. \"Fix Feb-29 date picker crash\"."
+        },
+        "goal": {
+          "type": "string",
+          "description": "What to achieve and how to know it is done — repro steps, expected behavior, constraints. Keep it CRISP: 2-3 sentences of context plus requirement bullets. It becomes the task card and the MR fallback text — not the place for a spec dump."
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "bug",
+            "feature",
+            "chore"
+          ],
+          "description": "Task kind (the flair)."
+        },
+        "base_branch": {
+          "type": "string",
+          "description": "Default base branch for repos that do not name one."
+        },
+        "ticket": {
+          "type": "object",
+          "description": "Optional linked ticket (e.g. CliffHub).",
+          "properties": {
+            "connector": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "url": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "project",
+        "title",
+        "goal"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "publish_test_plan",
+    "description": "Coding task: the change is implemented, committed and verified locally — hand it to the requester to test THROUGH THE PRODUCT. Give: url = what they open (the product UI when the project has one — never an API endpoint), steps = numbered actions from THEIR perspective (who to sign in as, what to click, what they should see), counter_steps = what must NOT happen (the other role's view, the previous behavior that must stay the same), accounts = which test roles/users to use (no secrets). Pass servers (repo + command, e.g. backend \"docker compose up\" / frontend \"npm run dev\") and the runner STARTS and keeps them running while they test — do not start servers yourself. Moves the task to awaiting_user_test; END your turn right after.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "url": {
+          "type": "string",
+          "description": "What the requester opens, e.g. http://localhost:3000/leaves."
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Ordered steps from the requester's perspective (1–12)."
+        },
+        "counter_steps": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "What must NOT work / who must NOT see it / what must still work as before (≥1)."
+        },
+        "accounts": {
+          "type": "string",
+          "description": "Roles/test users to use, e.g. \"hr1@test.com (HR) and ica1@test.com (plain IC); passwords in the dev seed\"."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Anything else worth knowing (data to look at, month to pick, …)."
+        },
+        "servers": {
+          "type": "array",
+          "description": "Dev servers to start and keep running while the requester tests.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string",
+                "description": "Repo path (or its last segment) the command runs in."
+              },
+              "cmd": {
+                "type": "string",
+                "description": "Command, e.g. \"npm run dev -- --port 3000\" or \"docker compose up\"."
+              },
+              "url": {
+                "type": "string",
+                "description": "URL to wait for (its port must open), e.g. http://localhost:8000."
+              }
+            },
+            "required": [
+              "repo",
+              "cmd"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "steps",
+        "counter_steps"
+      ],
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "request_mr",
+    "description": "Coding task: push the branch and open the GitLab merge request — ONLY after the requester has tested. If they signed off (task card) it proceeds; otherwise it asks them for approval first and waits. Commit everything before calling (a dirty tree is refused). Never run git push or open MRs yourself. Pass repo_notes (or summary): the reviewer-facing MR body — what changed and why. NEVER local setup, localhost URLs, seeded accounts/passwords, debug notes or test-plan steps; Ex appends the task link + signature itself.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "summary": {
+          "type": "string",
+          "description": "MR body for repos without a repo_notes entry: 3-8 reviewer-facing bullets, what changed and why."
+        },
+        "repo_notes": {
+          "type": "array",
+          "description": "Per-repo MR body — preferred when the repos changed differently.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "repo": {
+                "type": "string",
+                "description": "Repo path or its last segment, e.g. \"cliffhub-2-frontend\"."
+              },
+              "note": {
+                "type": "string",
+                "description": "Reviewer-facing bullets for THIS repo."
+              }
+            },
+            "required": [
+              "repo",
+              "note"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "task_state",
+    "description": "Coding task: post a lifecycle note in the task thread and/or move the task state. Use state \"in_progress\" once you start changing code, \"setup_failed\" when the project cannot be built/run and you need the requester (say why in note). Milestone notes (\"Root cause: …\") go through post_message, not here.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "in_progress",
+            "setup_failed",
+            "workspace_ready"
+          ]
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional one-line note for the thread."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "register_project_commands",
+    "description": "Coding task: remember what you learned about running ONE repo of this project — install/setup, test and dev-server commands, the dev port, short notes (how to sign in, which roles exist, seed data) — so the next task skips the discovery. Call once you have verified the commands actually work.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "string",
+          "description": "Repo path (or its last segment) these commands belong to."
+        },
+        "setup_cmd": {
+          "type": "string"
+        },
+        "test_cmd": {
+          "type": "string"
+        },
+        "dev_cmd": {
+          "type": "string"
+        },
+        "port": {
+          "type": "number"
+        },
+        "notes": {
+          "type": "string",
+          "description": "Gotchas (env vars needed, seed data, …), ≤500 chars."
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  {
+    "name": "set_state",
+    "description": "Change your visible status emoji on the invoking message. ⚙️ is set for you automatically when you start — call this only to switch it (e.g. \"🔍\" while reviewing). Allowed: 👀 🧠 ⚙️ 🔍.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "👀",
+            "🧠",
+            "⚙️",
+            "🔍"
+          ]
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    }
+  }
+]
