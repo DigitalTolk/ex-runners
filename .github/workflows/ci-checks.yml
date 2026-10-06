@@ -1,0 +1,99 @@
+name: CI Checks
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  # Lint runs first and fails fast — no point running the suites if the code
+  # doesn't even pass static checks.
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v9
+        with:
+          version: latest
+          args: --timeout=5m
+
+      # golangci-lint checks the host OS only; the runner ships for three.
+      - name: go vet (windows, darwin)
+        run: |
+          GOOS=windows go vet ./...
+          GOOS=darwin go vet ./...
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run go test with coverage (race)
+        run: |
+          go test -race -coverprofile=coverage.out -covermode=atomic ./...
+          go tool cover -func=coverage.out | tail -1
+
+      - name: Enforce coverage gate (= 100% statements)
+        # Mirrors the Makefile's `check` target (see COVERAGE.md).
+        run: go run github.com/vladopajic/go-test-coverage/v2@v2.18.8 --config=.testcoverage.yml
+
+      - name: Upload coverage to Coveralls
+        uses: coverallsapp/github-action@v2
+        with:
+          file: coverage.out
+          format: golang
+          flag-name: linux
+          parallel: true
+          # The 100% gate above is what blocks a merge; Coveralls only reports.
+          fail-on-error: false
+          github-token: ${{ github.token }}
+
+  test-macos:
+    # Most runners live on Macs: the process-group, sandbox-profile and
+    # login-shell paths run for real here.
+    name: Test (macOS)
+    runs-on: macos-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run go test (race)
+        run: go test -race ./...
+
+  coverage-finish:
+    # Tells Coveralls that all parallel coverage uploads are done.
+    name: Coverage
+    runs-on: ubuntu-latest
+    needs: [test, test-macos]
+    if: always()
+    steps:
+      - name: Coveralls Finished
+        uses: coverallsapp/github-action@v2
+        with:
+          parallel-finished: true
+          fail-on-error: false
+          github-token: ${{ github.token }}

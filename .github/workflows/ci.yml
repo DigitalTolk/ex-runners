@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: Checks
+    uses: ./.github/workflows/ci-checks.yml
+
+  build:
+    # Every release target must keep compiling — one static binary per
+    # OS/arch, no runtime to install.
+    name: Build
+    needs: checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Cross-compile release targets
+        run: make release
+
+      - name: Smoke test
+        run: |
+          make build
+          ./dist/ex-runner --version
+          ./dist/ex-runner help
