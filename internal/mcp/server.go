@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/DigitalTolk/ex-runners/internal/attachments"
 	"github.com/DigitalTolk/ex-runners/internal/spill"
 	"github.com/DigitalTolk/ex-runners/internal/toolindex"
 )
@@ -44,6 +45,9 @@ type Server struct {
 	// preview + a fetch_spill locator — the model pages through the full data
 	// instead of losing it to truncation. One store per run.
 	spills *spill.Store
+	// attachments is the run's attachments dir as a store (fetch_attachment
+	// writes there); nil when the run has none.
+	attachments *attachments.Store
 
 	mu          sync.Mutex
 	described   map[string]bool // tools whose full contract this run has read (index mode)
@@ -56,7 +60,7 @@ type Server struct {
 
 // NewServer builds a server for one run.
 func NewServer(env Env) *Server {
-	return &Server{
+	s := &Server{
 		env:       env,
 		http:      &http.Client{Timeout: 120 * time.Second},
 		pollEvery: 2 * time.Second,
@@ -64,6 +68,10 @@ func NewServer(env Env) *Server {
 		spills:    spill.NewStore(),
 		described: map[string]bool{},
 	}
+	if env.AttachmentsDir != "" {
+		s.attachments = attachments.NewStore(env.AttachmentsDir)
+	}
+	return s
 }
 
 // visibleTools is the advertised tool set for this run. connector_call and
@@ -78,6 +86,9 @@ func (s *Server) visibleTools() []toolindex.ToolDef {
 		}
 		if s.env.Gated && gatedHidden[t.Name] {
 			continue
+		}
+		if t.Name == "fetch_attachment" && s.env.AttachmentsDir == "" {
+			continue // nowhere to put the file
 		}
 		out = append(out, t)
 	}

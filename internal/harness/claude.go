@@ -51,6 +51,7 @@ var allowedTools = strings.Join([]string{
 	"mcp__ex__propose_reply",
 	"mcp__ex__link_message",
 	"mcp__ex__fetch_spill",
+	"mcp__ex__fetch_attachment",
 	"mcp__ex__connector_call",
 	"mcp__ex__use_connector",
 	"mcp__ex__connector_lookup",

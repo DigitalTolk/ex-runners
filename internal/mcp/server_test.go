@@ -14,7 +14,7 @@ import (
 )
 
 func TestToolsJSONIsTheFullContract(t *testing.T) {
-	if len(allTools) != 45 {
+	if len(allTools) != 46 {
 		t.Fatalf("tools = %d", len(allTools))
 	}
 	for _, tl := range allTools {

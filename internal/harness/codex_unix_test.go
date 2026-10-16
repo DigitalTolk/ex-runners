@@ -540,3 +540,38 @@ func TestRunCodexAuthSync(t *testing.T) {
 		}
 	})
 }
+
+func TestRunCodexImageAttachments(t *testing.T) {
+	codexUser(t, "", "")
+	stdout := `{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}` + "\n"
+	// A codex that takes --image gets one flag per image, in the = form so
+	// the multi-valued flag cannot swallow the "-" stdin sentinel — on a
+	// fresh exec and on a resume alike.
+	withImages := newCodex(t, fakeSpec{stdout: stdout, files: map[string]string{"help.txt": codexHelp + "  -i, --image <FILE>...         Optional image(s) to attach to the initial prompt\n"}})
+	images := []string{"/tmp/att/01-photo.png", "/tmp/att/02-shot.jpg"}
+	logs := &logRec{}
+	o := waitOutcome(t, RunCodex(baseAssignment(), RunOptions{BinPath: withImages.bin, SearchPath: searchPath, WorkDir: t.TempDir(), Images: images, Log: logs.log}, &recSink{}))
+	if !o.OK {
+		t.Fatalf("outcome = %+v", o)
+	}
+	if got, want := withImages.argv(), []string{"exec", "--json", "--skip-git-repo-check", "--image=/tmp/att/01-photo.png", "--image=/tmp/att/02-shot.jpg", "-"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("argv = %q", got)
+	}
+	if _, logged := logs.find("codex: exec --help lacks --image; images are listed by path only"); logged {
+		t.Error("warned although --image is supported")
+	}
+	o = waitOutcome(t, RunCodex(baseAssignment(), RunOptions{BinPath: withImages.bin, SearchPath: searchPath, WorkDir: t.TempDir(), Images: images[:1], ResumeSessionID: "th-1"}, &recSink{}))
+	if got, want := withImages.argv(), []string{"exec", "resume", "th-1", "--json", "--skip-git-repo-check", "--image=/tmp/att/01-photo.png", "-"}; !o.OK || !reflect.DeepEqual(got, want) {
+		t.Errorf("resume argv = %q (ok=%v)", got, o.OK)
+	}
+	// An older codex: the images stay listed by path in the prompt only.
+	old := newCodex(t, fakeSpec{stdout: stdout})
+	logs = &logRec{}
+	o = waitOutcome(t, RunCodex(baseAssignment(), RunOptions{BinPath: old.bin, SearchPath: searchPath, WorkDir: t.TempDir(), Images: images, Log: logs.log}, &recSink{}))
+	if got, want := old.argv(), []string{"exec", "--json", "--skip-git-repo-check", "-"}; !o.OK || !reflect.DeepEqual(got, want) {
+		t.Errorf("old argv = %q (ok=%v)", got, o.OK)
+	}
+	if _, logged := logs.find("codex: exec --help lacks --image; images are listed by path only"); !logged {
+		t.Error("missing --image not logged")
+	}
+}

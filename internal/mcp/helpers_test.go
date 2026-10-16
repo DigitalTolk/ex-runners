@@ -25,6 +25,8 @@ type bcall struct {
 	method, path, query, auth, ctype string
 	body                             map[string]any
 	rawBody                          string
+	headers                          http.Header
+	contentLength                    int64
 }
 
 type answer struct {
@@ -40,7 +42,7 @@ func newBackend(t *testing.T) *backend {
 		_ = json.Unmarshal(raw, &body)
 		key := r.Method + " " + r.URL.Path
 		b.mu.Lock()
-		b.calls = append(b.calls, bcall{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Content-Type"), body, string(raw)})
+		b.calls = append(b.calls, bcall{r.Method, r.URL.Path, r.URL.RawQuery, r.Header.Get("Authorization"), r.Header.Get("Content-Type"), body, string(raw), r.Header.Clone(), r.ContentLength})
 		list := b.answers[key]
 		a := answer{200, "{}"}
 		if len(list) > 0 {

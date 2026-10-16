@@ -380,6 +380,16 @@ func (e *executor) execute(a protocol.Assignment) {
 	}
 	// The run token in mcp.json dies with the run; the file goes with it.
 	defer func() { _ = os.Remove(filepath.Join(privateDir, "mcp.json")) }()
+	// Message files: a fresh dir per run (resumes included — a session's
+	// workdir persists, these must not), under $TMPDIR rather than the
+	// runner's state or the private dir, which are credential locations the
+	// harness must not read (codex's sandbox denies them outright).
+	attachmentsDir, err := mkdirTemp("", "ex-attachments-")
+	if err != nil {
+		e.fail(a.RunID, "runner_error: "+err.Error())
+		return
+	}
+	defer func() { _ = os.RemoveAll(attachmentsDir) }()
 
 	var runMu sync.Mutex
 	var running harness.Running
@@ -474,12 +484,18 @@ func (e *executor) execute(a protocol.Assignment) {
 		preamble += setup.Instructions + "\n\n"
 	}
 
+	// The invoking message's files, listed at the END of the prompt (after
+	// the bundle) on fresh and resumed runs alike — a resume never re-sends
+	// the bundle, so without this the files would be missed.
+	attachText, images := e.fetchAttachments(a, attachmentsDir)
+
 	env := map[string]string{
-		"EX_BASE_URL":    e.baseURL,
-		"EX_RUN_TOKEN":   a.MCPToken,
-		"EX_WORK_DIR":    workDir,
-		"EX_PRIVATE_DIR": privateDir,
-		"EX_ACTION_MODE": a.ActionMode,
+		"EX_BASE_URL":        e.baseURL,
+		"EX_RUN_TOKEN":       a.MCPToken,
+		"EX_WORK_DIR":        workDir,
+		"EX_PRIVATE_DIR":     privateDir,
+		"EX_ACTION_MODE":     a.ActionMode,
+		"EX_ATTACHMENTS_DIR": attachmentsDir,
 	}
 	if e.stateDir != "" {
 		// The MCP server keeps harness tools away from the runner's own
@@ -515,6 +531,7 @@ func (e *executor) execute(a protocol.Assignment) {
 			WorkDir:    workDir,
 			PrivateDir: privateDir,
 			Cwd:        taskCwd,
+			Images:     images,
 			MCPServer:  harness.MCPServerCmd{Command: e.mcpEntry.Command, Args: e.mcpEntry.Args, Env: env},
 			OnSessionID: func(id string) {
 				if canResume {
@@ -528,9 +545,9 @@ func (e *executor) execute(a protocol.Assignment) {
 			// task + a nudge to re-read, not the whole bundle again.
 			opts.ResumeSessionID = resume
 			opts.PromptOverride = preamble + "[continuing in the same thread]\n# Task\n" + a.Prompt +
-				"\n\nThe thread may have moved since your last turn — call get_thread and reply to the newest messages."
-		} else if preamble != "" {
-			opts.PromptOverride = preamble + a.Prompt + "\n\n" + a.ContextBundle
+				"\n\nThe thread may have moved since your last turn — call get_thread and reply to the newest messages." + attachText
+		} else if preamble != "" || attachText != "" {
+			opts.PromptOverride = preamble + a.Prompt + "\n\n" + a.ContextBundle + attachText
 		}
 		r := run(a, opts, sink{pump})
 		runMu.Lock()
@@ -570,9 +587,9 @@ func (e *executor) execute(a protocol.Assignment) {
 	// prompt so turn-1 spend can be split between our content and the
 	// harness's own overhead. Warm resumes send the compact delta doc.
 	rulesChars := textutil.Len(harness.SystemRules(a.AgentName, a.InvokerName, a.Persona, harness.RulesOptions{Connectors: harness.RunHasConnectors(a)}))
-	taskChars := textutil.Len(preamble) + textutil.Len(a.Prompt) + textutil.Len(a.ContextBundle) + 2
+	taskChars := textutil.Len(preamble) + textutil.Len(a.Prompt) + textutil.Len(a.ContextBundle) + 2 + textutil.Len(attachText)
 	if session != nil {
-		taskChars = textutil.Len(preamble) + textutil.Len(a.Prompt) + 160
+		taskChars = textutil.Len(preamble) + textutil.Len(a.Prompt) + 160 + textutil.Len(attachText)
 	}
 	pump.push("prompt", map[string]any{
 		"rulesChars":    rulesChars,

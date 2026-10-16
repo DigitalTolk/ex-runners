@@ -56,6 +56,13 @@ type Env struct {
 	// RunnerHome is the runner's own state root (~/.ex-runner: its account
 	// token, per-run secrets). Tool calls that touch it always ask.
 	RunnerHome string
+	// AttachmentsDir holds the invoking message's files (downloaded by the
+	// runner) and whatever fetch_attachment adds. Reading it needs no card;
+	// "" hides fetch_attachment.
+	AttachmentsDir string
+	// Cwd is the process working directory — where the harness runs — one
+	// of the folders a posted file may come from.
+	Cwd string
 	// Coding task: set only on task-mode runs. TaskDir is the project
 	// checkout the task permission profile is scoped to.
 	TaskID, TaskDir, TaskProject string
@@ -79,19 +86,21 @@ type Env struct {
 // LoadEnv reads the run settings the runner put in the environment.
 func LoadEnv(getenv func(string) string, cwd string) Env {
 	e := Env{
-		BaseURL:       getenv("EX_BASE_URL"),
-		RunToken:      getenv("EX_RUN_TOKEN"),
-		WorkDir:       getenv("EX_WORK_DIR"),
-		PrivateDir:    getenv("EX_PRIVATE_DIR"),
-		RunnerHome:    getenv("EX_RUNNER_HOME"),
-		TaskID:        getenv("EX_TASK_ID"),
-		TaskDir:       getenv("EX_TASK_DIR"),
-		TaskProject:   getenv("EX_TASK_PROJECT"),
-		WorkspaceRoot: getenv("EX_WORKSPACE_ROOT"),
-		ActionMode:    getenv("EX_ACTION_MODE"),
-		ToolIndex:     getenv("EX_TOOL_INDEX") == "1",
-		AutoAllow:     map[string]bool{},
-		Connectors:    map[string]connectorCred{},
+		BaseURL:        getenv("EX_BASE_URL"),
+		RunToken:       getenv("EX_RUN_TOKEN"),
+		WorkDir:        getenv("EX_WORK_DIR"),
+		PrivateDir:     getenv("EX_PRIVATE_DIR"),
+		RunnerHome:     getenv("EX_RUNNER_HOME"),
+		AttachmentsDir: getenv("EX_ATTACHMENTS_DIR"),
+		Cwd:            cwd,
+		TaskID:         getenv("EX_TASK_ID"),
+		TaskDir:        getenv("EX_TASK_DIR"),
+		TaskProject:    getenv("EX_TASK_PROJECT"),
+		WorkspaceRoot:  getenv("EX_WORKSPACE_ROOT"),
+		ActionMode:     getenv("EX_ACTION_MODE"),
+		ToolIndex:      getenv("EX_TOOL_INDEX") == "1",
+		AutoAllow:      map[string]bool{},
+		Connectors:     map[string]connectorCred{},
 	}
 	if e.WorkDir == "" {
 		e.WorkDir = cwd
