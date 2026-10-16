@@ -60,9 +60,14 @@ the last week before it expires.
 ## Other commands
 
 ```sh
-ex-runner status    # server, account, machine name, token expiry
-ex-runner logout    # disconnect this computer and delete its token
+ex-runner status          # server, account, machine name, token expiry
+ex-runner status --json   # the same plus whether a runner is running, as JSON (never the token)
+ex-runner logout          # disconnect this computer and delete its token
+ex-runner login --no-browser <server-url>   # print the connect link instead of opening it
 ```
+
+The ex desktop app uses `--no-browser` and `status --json` when you set up a
+runner from its Runners tab.
 
 ## Files
 

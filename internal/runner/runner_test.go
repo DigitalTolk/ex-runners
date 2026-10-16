@@ -67,6 +67,7 @@ func startRunner(t *testing.T, f *fakeServer, onUnauth func()) Handle {
 			mu.Unlock()
 		},
 		OnUnauthorized: onUnauth,
+		Version:        "0.0.3",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -83,7 +84,7 @@ func TestLoopClaimsExecutesAndStops(t *testing.T) {
 
 	eventually(t, "the run to complete", func() bool { return len(f.callsTo("/api/v1/agent/runner/runs/run1/complete")) == 1 })
 	reg := f.callsTo("/api/v1/agent/runner/register")[0]
-	if reg.body["host"] != "test-mac" || reg.body["os"] == "" || reg.auth != "Bearer runner-tok" {
+	if reg.body["host"] != "test-mac" || reg.body["os"] == "" || reg.body["version"] != "0.0.3" || reg.auth != "Bearer runner-tok" {
 		t.Errorf("register = %+v", reg)
 	}
 	claim := f.callsTo("/api/v1/agent/runner/claim")[0]
@@ -91,6 +92,9 @@ func TestLoopClaimsExecutesAndStops(t *testing.T) {
 		t.Errorf("claim = %+v", claim.body)
 	}
 	eventually(t, "a heartbeat", func() bool { return len(f.callsTo("/api/v1/agent/runner/heartbeat")) > 0 })
+	if hb := f.callsTo("/api/v1/agent/runner/heartbeat")[0]; hb.body["version"] != "0.0.3" {
+		t.Errorf("heartbeat must carry the version too: %+v", hb.body)
+	}
 	st := r.Status()
 	if st.RunnerID == "" || st.Harnesses[0] != "claude" {
 		t.Errorf("status = %+v", st)
