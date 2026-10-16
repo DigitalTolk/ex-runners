@@ -25,6 +25,8 @@ type Config struct {
 	// expired): the runner has stopped claiming, and only a fresh
 	// `ex-runner login` brings it back.
 	OnUnauthorized func()
+	// Version is the ex-runner build, reported with the runner's identity.
+	Version string
 }
 
 // Status is a snapshot of a live runner.

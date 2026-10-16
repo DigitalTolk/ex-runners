@@ -113,7 +113,7 @@ func Start(ctx context.Context, cfg Config) (Handle, error) {
 	searchPath := loginShellPath(log)
 	harnesses := detectHarnesses(log)
 	host, _ := hostname()
-	identity := api.Identity{RunnerID: runnerID, Host: host, OS: platformName(runtime.GOOS)}
+	identity := api.Identity{RunnerID: runnerID, Host: host, OS: platformName(runtime.GOOS), Version: cfg.Version}
 	for _, h := range harnesses {
 		identity.Harnesses = append(identity.Harnesses, h.RunnerHarness)
 	}

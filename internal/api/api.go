@@ -73,6 +73,8 @@ type Identity struct {
 	Host      string                   `json:"host"`
 	OS        string                   `json:"os"`
 	Harnesses []protocol.RunnerHarness `json:"harnesses"`
+	// Version is this ex-runner build; the Runners page shows it.
+	Version string `json:"version,omitempty"`
 }
 
 // RenewResponse is a fresh token with a new expiry.

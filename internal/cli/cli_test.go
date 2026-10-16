@@ -291,7 +291,7 @@ func TestStartRunsUntilShutdown(t *testing.T) {
 		}))
 	}()
 	waitFor(t, func() bool { return strings.Contains(e.outText(), "ex-runner is online") })
-	if cfg.BaseURL != e.srv.URL || cfg.Token() != "tok" || cfg.StateDir != StateDir(e.home) || cfg.MCPEntry.Args[0] != "mcp-server" {
+	if cfg.BaseURL != e.srv.URL || cfg.Token() != "tok" || cfg.StateDir != StateDir(e.home) || cfg.MCPEntry.Args[0] != "mcp-server" || cfg.Version != "9.9.9" {
 		t.Errorf("cfg = %+v", cfg)
 	}
 	if _, err := os.Stat(lockPath(e.home)); err != nil {
@@ -499,3 +499,101 @@ func TestLogoutCommand(t *testing.T) {
 }
 
 func urlParse(s string) (*url.URL, error) { return url.Parse(s) }
+
+func TestLoginArguments(t *testing.T) {
+	e := newEnv(t)
+	for _, argv := range [][]string{{"login", "--help"}, {"login", "-h"}, {"login", "https://ex.example", "--help"}} {
+		e.out = nil
+		if Run(argv, e.deps(nil)) != 0 || !strings.Contains(e.outText(), "--no-browser") {
+			t.Errorf("%v: want login usage, got %q", argv, e.outText())
+		}
+	}
+	// A typo'd flag or an extra word is a usage error — never a server URL.
+	for _, argv := range [][]string{{"login", "--no-brwoser", e.srv.URL}, {"login", e.srv.URL, "extra"}, {"login", "--no-browser"}} {
+		if Run(argv, e.deps(nil)) != 2 {
+			t.Errorf("%v: want exit 2", argv)
+		}
+	}
+	if _, err := os.Stat(credentialsPath(e.home)); err == nil {
+		t.Error("no usage error may write credentials")
+	}
+}
+
+func TestLoginNoBrowser(t *testing.T) {
+	e := newEnv(t)
+	approve := e.approve()
+	opened := false
+	// The flag works on either side of the URL. The link is still printed —
+	// whoever drives the login approves it from there.
+	done := make(chan int, 1)
+	go func() {
+		done <- Run([]string{"login", "--no-browser", e.srv.URL}, e.deps(func(d *Deps) {
+			d.OpenBrowser = func(string) { opened = true }
+		}))
+	}()
+	var link string
+	waitFor(t, func() bool {
+		for _, l := range strings.Split(e.outText(), "\n") {
+			if strings.Contains(l, "/runner/connect?") {
+				link = strings.TrimSpace(l)
+				return true
+			}
+		}
+		return false
+	})
+	approve(link)
+	if code := <-done; code != 0 || opened {
+		t.Fatalf("login = %d opened=%v err=%s", code, opened, e.errText())
+	}
+	if c, ok := loadCredentials(credentialsPath(e.home)); !ok || c.Token != "new" {
+		t.Errorf("saved = %+v", c)
+	}
+}
+
+func TestStatusJSON(t *testing.T) {
+	e := newEnv(t)
+	read := func(over func(d *Deps)) statusJSON {
+		t.Helper()
+		e.out = nil
+		if code := Run([]string{"status", "--json"}, e.deps(over)); code != 0 {
+			t.Fatalf("exit %d", code)
+		}
+		var st statusJSON
+		if err := json.Unmarshal([]byte(e.outText()), &st); err != nil {
+			t.Fatalf("not JSON: %q", e.outText())
+		}
+		return st
+	}
+	// Not connected is an answer, not an error.
+	if st := read(nil); st.Connected || st.Running || st.Version != "9.9.9" || st.Home != e.home {
+		t.Errorf("empty home = %+v", st)
+	}
+	e.saveCreds(nil)
+	st := read(nil)
+	if !st.Connected || st.Expired || st.Server != e.srv.URL || st.Label == "" || st.TokenID == "" || st.User == "" {
+		t.Errorf("connected = %+v", st)
+	}
+	if strings.Contains(e.outText(), `"`+sampleCreds(nil).Token+`"`) {
+		t.Error("the token must never be printed")
+	}
+	e.saveCreds(func(c *Credentials) { c.ExpiresAt = t0.Add(-time.Hour).Format(time.RFC3339Nano) })
+	if st := read(nil); !st.Expired {
+		t.Error("expired not reported")
+	}
+	// A live lock holder is "running"; a dead one is not.
+	if err := os.WriteFile(lockPath(e.home), []byte("4242\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if st := read(nil); !st.Running || st.PID != 4242 {
+		t.Errorf("running = %+v", st)
+	}
+	if st := read(func(d *Deps) { d.Alive = func(int) bool { return false } }); st.Running || st.PID != 0 {
+		t.Errorf("dead holder = %+v", st)
+	}
+	// Bad arguments.
+	for _, argv := range [][]string{{"status", "--jsn"}, {"status", "extra"}} {
+		if Run(argv, e.deps(nil)) != 2 {
+			t.Errorf("%v: want exit 2", argv)
+		}
+	}
+}

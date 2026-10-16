@@ -6,6 +6,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
@@ -44,14 +45,18 @@ const Usage = `ex-runner — runs your ex agents (Claude Code, Codex) on this co
 
 Usage:
   ex-runner login <server-url>   Connect this computer to your ex account
+                                 (--no-browser: print the link, don't open it)
   ex-runner start                Bring your agents online here (Ctrl-C to stop)
   ex-runner status               Show the account and server this runner uses
+                                 (--json: the same as one JSON object)
   ex-runner logout               Disconnect this computer and forget its token
   ex-runner --version            Print the version
 
 Files live in $EX_RUNNER_HOME (default: ~/.ex-runner).`
 
 const notSignedIn = "This computer is not connected to ex yet. Run: ex-runner login <server-url>"
+
+const loginUsage = "Usage: ex-runner login [--no-browser] <server-url>    e.g. ex-runner login https://ex.example.com"
 
 // A server that can't be reached at start (a laptop logging in before
 // Wi-Fi is up, the server mid-deploy) is retried with backoff instead of
@@ -100,14 +105,27 @@ func Run(argv []string, d Deps) int {
 		d.Out(d.Version)
 		return 0
 	case "login":
-		arg := ""
-		if len(argv) > 1 {
-			arg = argv[1]
+		flags, args, ok := parseArgs(argv[1:], "--no-browser")
+		if flags["--help"] {
+			d.Out(loginUsage)
+			return 0
 		}
-		return cmdLogin(arg, &d)
+		if !ok || len(args) != 1 {
+			d.Err(loginUsage)
+			return 2
+		}
+		return cmdLogin(args[0], flags["--no-browser"], &d)
 	case "start":
 		return cmdStart(&d)
 	case "status":
+		flags, args, ok := parseArgs(argv[1:], "--json")
+		if !ok || len(args) > 0 {
+			d.Err("Usage: ex-runner status [--json]")
+			return 2
+		}
+		if flags["--json"] {
+			return cmdStatusJSON(&d)
+		}
 		return cmdStatus(&d)
 	case "logout":
 		return cmdLogout(&d)
@@ -123,11 +141,43 @@ func (d *Deps) client(server, token string) *api.Client {
 	return c
 }
 
-func cmdLogin(arg string, d *Deps) int {
+// parseArgs splits a command's arguments into the flags it knows (plus
+// --help/-h, always accepted) and positional arguments. ok is false when an
+// unknown flag appears — a typo must not become a server URL.
+func parseArgs(argv []string, known ...string) (flags map[string]bool, args []string, ok bool) {
+	flags = map[string]bool{}
+	allowed := map[string]bool{"--help": true}
+	for _, k := range known {
+		allowed[k] = true
+	}
+	ok = true
+	for _, a := range argv {
+		switch {
+		case a == "-h":
+			flags["--help"] = true
+		case strings.HasPrefix(a, "-"):
+			if !allowed[a] {
+				ok = false
+			}
+			flags[a] = true
+		default:
+			args = append(args, a)
+		}
+	}
+	return flags, args, ok
+}
+
+func cmdLogin(arg string, noBrowser bool, d *Deps) int {
 	server, ok := normalizeServer(arg)
 	if !ok {
-		d.Err("Usage: ex-runner login <server-url>    e.g. ex-runner login https://ex.example.com")
+		d.Err(loginUsage)
 		return 2
+	}
+	openBrowser := d.OpenBrowser
+	if noBrowser {
+		// Something else shows the link (the ex desktop app approves it
+		// in-app): print it, open nothing.
+		openBrowser = func(string) {}
 	}
 	file := credentialsPath(d.Home)
 	previous, hadPrevious := loadCredentials(file)
@@ -141,7 +191,7 @@ func cmdLogin(arg string, d *Deps) int {
 		}
 	}()
 	creds, err := login(ctx, server, loginDeps{
-		openBrowser: d.OpenBrowser,
+		openBrowser: openBrowser,
 		out:         d.Out,
 		label:       machineLabel(d.Hostname),
 		timeout:     d.LoginTimeout,
@@ -244,6 +294,7 @@ func cmdStart(d *Deps) int {
 			d.Out(line)
 		},
 		OnUnauthorized: func() { unauthOnce.Do(func() { close(unauthorized) }) },
+		Version:        d.Version,
 	}
 
 	var handle runner.Handle
@@ -310,6 +361,39 @@ func cmdStatus(d *Deps) int {
 	if expired {
 		return 1
 	}
+	return 0
+}
+
+// statusJSON is `ex-runner status --json`: what a program driving the runner
+// (the ex desktop app) needs, never the token itself.
+type statusJSON struct {
+	Version   string `json:"version"`
+	Home      string `json:"home"`
+	Connected bool   `json:"connected"`
+	Server    string `json:"server,omitempty"`
+	User      string `json:"user,omitempty"`
+	Label     string `json:"label,omitempty"`
+	TokenID   string `json:"tokenId,omitempty"`
+	ExpiresAt string `json:"expiresAt,omitempty"`
+	Expired   bool   `json:"expired"`
+	// Running is whether a runner holds this home's lock, and its pid.
+	Running bool `json:"running"`
+	PID     int  `json:"pid,omitempty"`
+}
+
+// cmdStatusJSON always exits 0: "not connected" is an answer, not an error.
+func cmdStatusJSON(d *Deps) int {
+	st := statusJSON{Version: d.Version, Home: d.Home}
+	if creds, ok := loadCredentials(credentialsPath(d.Home)); ok {
+		st.Connected = true
+		st.Server, st.User, st.Label, st.TokenID, st.ExpiresAt = creds.Server, creds.User, creds.Label, creds.TokenID, creds.ExpiresAt
+		st.Expired = isExpired(creds, d.Now())
+	}
+	if pid := readPid(lockPath(d.Home)); pid > 0 && d.Alive(pid) {
+		st.Running, st.PID = true, pid
+	}
+	raw, _ := json.Marshal(st) // plain strings, bools and ints always marshal
+	d.Out(string(raw))
 	return 0
 }
 
