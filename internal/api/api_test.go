@@ -57,6 +57,9 @@ func TestClaimFlattensHarnessNamesAndEmptyPoll(t *testing.T) {
 		t.Fatalf("Claim(204) = %v, %v", as, err)
 	}
 	b := (*got)[0].body
+	if f, _ := b["features"].([]any); len(f) != 1 || f[0] != "files" {
+		t.Errorf("claim must advertise the files feature: %v", b["features"])
+	}
 	if b["runnerID"] != "r1" || b["max"] != float64(2) || b["waitSec"] != float64(20) || b["harnesses"].([]any)[0] != "claude" {
 		t.Fatalf("claim body = %v", b)
 	}

@@ -323,6 +323,16 @@ func runCodex(a protocol.Assignment, opts RunOptions, sink EventSink, r *run, lo
 	if strings.Contains(help, "--skip-git-repo-check") {
 		args = append(args, "--skip-git-repo-check")
 	}
+	// Image attachments ride --image (exec and exec resume both take it).
+	// One flag per file in the = form: the flag is multi-valued and would
+	// otherwise swallow the "-" stdin sentinel as a filename.
+	if len(opts.Images) > 0 && !strings.Contains(help, "--image") {
+		log("codex: exec --help lacks --image; images are listed by path only", map[string]any{})
+	} else {
+		for _, p := range opts.Images {
+			args = append(args, "--image="+p)
+		}
+	}
 	// Prompt from stdin ("-" is codex's read-from-stdin sentinel): argv has
 	// platform size limits and shows in `ps`; the bundle can be tens of KB.
 	args = append(args, "-")

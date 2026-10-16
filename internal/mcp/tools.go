@@ -75,7 +75,11 @@ func (s *Server) call(name string, args map[string]any) toolResult {
 		// Models pad with runs of blank lines; in chat that renders as big
 		// empty gaps. Collapse to one blank line — paragraph breaks survive.
 		body := strings.TrimSpace(blankRuns.ReplaceAllString(str(args, "body"), "\n\n"))
-		if body == "" {
+		files, err := s.attachmentPaths(args)
+		if err != nil {
+			return fail(err.Error())
+		}
+		if body == "" && len(files) == 0 {
 			return fail("post_message requires a non-empty body")
 		}
 		s.mu.Lock()
@@ -84,11 +88,7 @@ func (s *Server) call(name string, args map[string]any) toolResult {
 		s.mu.Unlock()
 		// Idempotency: a network retry of the same logical post must not
 		// double-post (plan-v2 §7). Sequence-scoped to this process = run.
-		res := s.callBackend(http.MethodPost, "/api/v1/agent/run/messages", map[string]any{"body": body, "idempotencyKey": key})
-		if !res.ok {
-			return s.failure(res)
-		}
-		return ok(fmt.Sprintf("posted (messageID=%v, remaining posts: %s)", res.data["messageID"], remaining(res.data)))
+		return s.postWithAttachments(http.MethodPost, "/api/v1/agent/run/messages", map[string]any{"body": body, "idempotencyKey": key}, files, "posted")
 	case "get_thread", "get_context":
 		path, empty := "/api/v1/agent/run/thread", "(thread is empty)"
 		if name == "get_context" {
@@ -221,18 +221,18 @@ func (s *Server) call(name string, args map[string]any) toolResult {
 		return ok(nonEmptyText(res.data, "(no messages with that user)"))
 	case "post_to_channel":
 		channelID, body := str(args, "channelID"), str(args, "body")
-		if channelID == "" || strings.TrimSpace(body) == "" {
+		files, err := s.attachmentPaths(args)
+		if err != nil {
+			return fail(err.Error())
+		}
+		if channelID == "" || (strings.TrimSpace(body) == "" && len(files) == 0) {
 			return fail("post_to_channel requires channelID and body")
 		}
 		payload := map[string]any{"body": body}
 		if root := str(args, "thread_root"); root != "" {
 			payload["thread_root"] = root
 		}
-		res := s.callBackend(http.MethodPost, "/api/v1/agent/run/channels/"+url.PathEscape(channelID)+"/messages", payload)
-		if !res.ok {
-			return s.failure(res)
-		}
-		return ok(fmt.Sprintf("posted (messageID=%v, remaining posts: %s)", res.data["messageID"], remaining(res.data)))
+		return s.postWithAttachments(http.MethodPost, "/api/v1/agent/run/channels/"+url.PathEscape(channelID)+"/messages", payload, files, "posted")
 	case "search_messages":
 		query := str(args, "query")
 		if strings.TrimSpace(query) == "" {
@@ -280,14 +280,16 @@ func (s *Server) call(name string, args map[string]any) toolResult {
 		return ok(textOr(res.data, action+"ed"))
 	case "send_dm":
 		userID, body := str(args, "userID"), str(args, "body")
-		if userID == "" || strings.TrimSpace(body) == "" {
+		files, err := s.attachmentPaths(args)
+		if err != nil {
+			return fail(err.Error())
+		}
+		if userID == "" || (strings.TrimSpace(body) == "" && len(files) == 0) {
 			return fail("send_dm requires userID and body")
 		}
-		res := s.callBackend(http.MethodPost, "/api/v1/agent/run/dm", map[string]any{"userID": userID, "body": body})
-		if !res.ok {
-			return s.failure(res)
-		}
-		return ok(fmt.Sprintf("sent (messageID=%v, remaining posts: %s)", res.data["messageID"], remaining(res.data)))
+		return s.postWithAttachments(http.MethodPost, "/api/v1/agent/run/dm", map[string]any{"userID": userID, "body": body}, files, "sent")
+	case "fetch_attachment":
+		return s.fetchAttachment(args)
 	case "propose_reply":
 		text := str(args, "text")
 		if strings.TrimSpace(text) == "" {
@@ -577,6 +579,10 @@ func (s *Server) approvalPrompt(args map[string]any) toolResult {
 	// Credential locations (the runner's own token, ~/.ssh, cloud and CLI
 	// logins…) always ask: no profile or standing permission covers them.
 	protected := s.inputTouchesProtected(input)
+	// The invoker's own attached files: reading them is what they are for.
+	if !protected && s.readsAttachmentsOnly(toolName, input) {
+		return allow()
+	}
 	cls := toolClass(toolName)
 	policyReason := ""
 	switch {

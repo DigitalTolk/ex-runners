@@ -21,7 +21,7 @@ const wantAllowedTools = "mcp__ex__post_message,mcp__ex__get_thread,mcp__ex__get
 	"mcp__ex__send_dm,mcp__ex__update_memory,mcp__ex__claim_task,mcp__ex__set_state,mcp__ex__set_reminder," +
 	"mcp__ex__list_reminders,mcp__ex__cancel_reminder,mcp__ex__list_schedules,mcp__ex__create_schedule," +
 	"mcp__ex__delete_schedule,mcp__ex__pin_message,mcp__ex__notify_owner,mcp__ex__propose_reply," +
-	"mcp__ex__link_message,mcp__ex__fetch_spill,mcp__ex__connector_call,mcp__ex__use_connector," +
+	"mcp__ex__link_message,mcp__ex__fetch_spill,mcp__ex__fetch_attachment,mcp__ex__connector_call,mcp__ex__use_connector," +
 	"mcp__ex__connector_lookup,mcp__ex__create_coding_task,mcp__ex__publish_test_plan,mcp__ex__request_mr," +
 	"mcp__ex__task_state,mcp__ex__register_project_commands"
 

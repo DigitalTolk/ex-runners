@@ -164,8 +164,11 @@ func (c *Client) Claim(ctx context.Context, id Identity, max, waitSec int) ([]pr
 	err := c.call(ctx, http.MethodPost, "/api/v1/agent/runner/claim", map[string]any{
 		"runnerID":  id.RunnerID,
 		"harnesses": names,
-		"max":       max,
-		"waitSec":   waitSec,
+		// What this runner can do beyond running a harness: the server hands
+		// runs that need a feature only to runners that advertise it.
+		"features": protocol.RunnerFeatures,
+		"max":      max,
+		"waitSec":  waitSec,
 	}, &out)
 	return out.Assignments, err
 }

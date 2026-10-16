@@ -79,6 +79,17 @@ type TaskSpec struct {
 	RunnerID     string         `json:"runnerID,omitempty"`
 }
 
+// Attachment is one file on the invoking message, already authorised for
+// this run (mirrors the server's claim payload). Only the id travels back
+// to the server: the bytes are fetched through the runner's own base URL.
+type Attachment struct {
+	ID          string `json:"id"`
+	MessageID   string `json:"messageID,omitempty"`
+	Filename    string `json:"filename"`
+	ContentType string `json:"contentType"`
+	Size        int64  `json:"size"`
+}
+
 // Assignment is one claimed run (mirrors service.Assignment).
 type Assignment struct {
 	RunID        string `json:"runID"`
@@ -108,6 +119,8 @@ type Assignment struct {
 	ConnectorSlugs []string `json:"connectorSlugs,omitempty"`
 	// Coding task (mode "task"): the harness runs INSIDE the checkout.
 	Task *TaskSpec `json:"task,omitempty"`
+	// Files on the invoking message, downloaded before the harness starts.
+	Attachments []Attachment `json:"attachments,omitempty"`
 	// Harness tool classes the invoker pre-approved (read|edit|shell|web).
 	AutoAllow      []string    `json:"autoAllow,omitempty"`
 	Limits         AgentLimits `json:"limits"`
@@ -163,3 +176,8 @@ type RunOutcome struct {
 	Reason    string
 	Usage     Usage
 }
+
+// RunnerFeatures is what this runner advertises when it claims work. "files":
+// it fetches run attachments (fetch_attachment) and posts files
+// (post_message attachments) — the design agent's runs require it.
+var RunnerFeatures = []string{"files"}

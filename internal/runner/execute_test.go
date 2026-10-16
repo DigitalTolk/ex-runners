@@ -130,7 +130,11 @@ func TestExecuteSuccessReportsEventsAndCompletes(t *testing.T) {
 	if opts.MCPServer.Command != "/opt/ex-runner" || env["EX_RUN_TOKEN"] != "run-tok" || env["EX_BASE_URL"] != f.srv.URL || env["EX_WORK_DIR"] != opts.WorkDir {
 		t.Errorf("mcp = %+v", opts.MCPServer)
 	}
-	if opts.BinPath != "/bin/claude" || opts.SearchPath != "/usr/bin" || opts.PromptOverride != "" {
+	// No preamble and no files: the override still carries the prompt, the
+	// bundle and the one line naming the folder a shareable file may live in.
+	if opts.BinPath != "/bin/claude" || opts.SearchPath != "/usr/bin" ||
+		!strings.HasPrefix(opts.PromptOverride, "what is 2+2?") ||
+		!strings.HasSuffix(opts.PromptOverride, "To share a file you create, write it under "+env["EX_ATTACHMENTS_DIR"]+" and pass its path in a post tool's attachments.") {
 		t.Errorf("opts = %+v", opts)
 	}
 	if _, has := env["EX_TASK_ID"]; has {
