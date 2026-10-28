@@ -30,6 +30,10 @@ func Home(getenv func(string) string, userHome string) string {
 
 func credentialsPath(home string) string { return filepath.Join(home, "credentials.json") }
 
+// deviceKeyPath is this computer's device key (internal/devicekey): made at
+// login, replaced on re-login, deleted on logout.
+func deviceKeyPath(home string) string { return filepath.Join(home, "device-key.json") }
+
 // StateDir is where the runner keeps its state under a home.
 func StateDir(home string) string { return filepath.Join(home, "state") }
 
@@ -46,6 +50,11 @@ type Credentials struct {
 	Label     string `json:"label"`     // this machine's name on the Runners page
 	User      string `json:"user"`      // display name of the account it runs for
 	ExpiresAt string `json:"expiresAt"` // RFC 3339; renewed automatically while running
+	// DeviceKey: the server has this computer's device key for the token,
+	// so every request must carry a proof from device-key.json. False for
+	// sign-ins made before device keys: those run unsigned until the next
+	// `ex-runner login`.
+	DeviceKey bool `json:"deviceKey,omitempty"`
 }
 
 // parseCredentials accepts only a complete record with a parseable expiry;
@@ -80,7 +89,7 @@ func saveCredentials(file string, c *Credentials) error {
 	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
 		return err
 	}
-	raw, _ := json.MarshalIndent(c, "", "  ") // a struct of strings always marshals
+	raw, _ := json.MarshalIndent(c, "", "  ") // strings and a bool always marshal
 	tmp := file + ".tmp"
 	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
 		return err
@@ -99,11 +108,11 @@ func expiry(c *Credentials) time.Time {
 	return t
 }
 
-// Runner tokens live 30 days. A running ex-runner renews once the token is
-// within a week of expiry, and checks twice a day — so a machine that is on
-// at least once a week never needs a fresh `ex-runner login`.
+// Runner tokens live 7 days. A running ex-runner renews once the token is
+// within 3 days of expiry, and checks twice a day — so a machine that is on
+// at least every few days never needs a fresh `ex-runner login`.
 const (
-	renewWithin = 7 * 24 * time.Hour
+	renewWithin = 3 * 24 * time.Hour
 	renewCheck  = 12 * time.Hour
 )
 

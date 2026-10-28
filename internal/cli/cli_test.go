@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/DigitalTolk/ex-runners/internal/api"
+	"github.com/DigitalTolk/ex-runners/internal/devicekey"
 	"github.com/DigitalTolk/ex-runners/internal/runner"
 )
 
@@ -30,14 +31,22 @@ type env struct {
 	// server answers: path → (status, body)
 	answers  map[string][2]string
 	requests []string
+	// bodies and proofs (X-Ex-Runner-Proof) by request, parallel to requests.
+	bodies   []map[string]any
+	proofs   []string
 	shutdown chan struct{}
 }
 
 func newEnv(t *testing.T) *env {
 	e := &env{t: t, home: t.TempDir(), answers: map[string][2]string{}, shutdown: make(chan struct{})}
 	e.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ := io.ReadAll(r.Body)
+		var body map[string]any
+		_ = json.Unmarshal(raw, &body)
 		e.mu.Lock()
 		e.requests = append(e.requests, r.Method+" "+r.URL.Path+" "+r.Header.Get("Authorization"))
+		e.bodies = append(e.bodies, body)
+		e.proofs = append(e.proofs, r.Header.Get(api.ProofHeader))
 		ans, ok := e.answers[r.URL.Path]
 		e.mu.Unlock()
 		if !ok {
@@ -82,6 +91,15 @@ func (e *env) deps(over func(d *Deps)) Deps {
 	return d
 }
 
+// TestMain keeps every test off the Secure Enclave: software keys behave
+// the same and need no hardware (devicekey tests the enclave itself).
+func TestMain(m *testing.M) {
+	newDeviceKey = devicekey.NewSoftware
+	os.Exit(m.Run())
+}
+
+// saveCreds writes credentials and, when they are locked to a device key,
+// a key for them.
 func (e *env) saveCreds(over func(c *Credentials)) {
 	c := sampleCreds(over)
 	if c.Server == "https://ex.example" {
@@ -90,6 +108,17 @@ func (e *env) saveCreds(over func(c *Credentials)) {
 	if err := saveCredentials(credentialsPath(e.home), c); err != nil {
 		e.t.Fatal(err)
 	}
+	if c.DeviceKey {
+		e.saveKey()
+	}
+}
+
+func (e *env) saveKey() *devicekey.Key {
+	k, _ := devicekey.NewSoftware(t0)
+	if err := k.Save(deviceKeyPath(e.home)); err != nil {
+		e.t.Fatal(err)
+	}
+	return k
 }
 
 func (e *env) outText() string { e.mu.Lock(); defer e.mu.Unlock(); return strings.Join(e.out, "\n") }
@@ -245,13 +274,26 @@ func TestLoginFailures(t *testing.T) {
 	if Run([]string{"login", e3.srv.URL}, e3.deps(nil)) != 1 || !strings.Contains(e3.errText(), "interrupted") {
 		t.Errorf("interrupt = %s", e3.errText())
 	}
-	// The token can't be saved (home is a file).
+	// The device key can't be saved (home is a file).
 	e4 := newEnv(t)
 	blocker := filepath.Join(e4.home, "file")
 	_ = os.WriteFile(blocker, []byte("x"), 0o600)
 	e4.home = blocker
-	if Run([]string{"login", e4.srv.URL}, e4.deps(func(d *Deps) { d.OpenBrowser = e4.approve() })) != 1 || !strings.Contains(e4.errText(), "Couldn't save the runner token") {
-		t.Errorf("save failure = %s", e4.errText())
+	if Run([]string{"login", e4.srv.URL}, e4.deps(func(d *Deps) { d.OpenBrowser = e4.approve() })) != 1 || !strings.Contains(e4.errText(), "Couldn't save this computer's device key") {
+		t.Errorf("key save failure = %s", e4.errText())
+	}
+	// The token can't be saved (a non-empty directory sits where it goes).
+	e5 := newEnv(t)
+	_ = os.MkdirAll(filepath.Join(credentialsPath(e5.home), "x"), 0o700)
+	if Run([]string{"login", e5.srv.URL}, e5.deps(func(d *Deps) { d.OpenBrowser = e5.approve() })) != 1 || !strings.Contains(e5.errText(), "Couldn't save the runner token") {
+		t.Errorf("save failure = %s", e5.errText())
+	}
+	// No device key can be made: nothing starts.
+	e6 := newEnv(t)
+	newDeviceKey = func(time.Time) (*devicekey.Key, error) { return nil, errors.New("no entropy") }
+	defer func() { newDeviceKey = devicekey.NewSoftware }()
+	if Run([]string{"login", e6.srv.URL}, e6.deps(nil)) != 1 || !strings.Contains(e6.errText(), "Couldn't make this computer's device key: no entropy") {
+		t.Errorf("key failure = %s", e6.errText())
 	}
 }
 
@@ -320,7 +362,7 @@ func TestStartStopsOnLostAuth(t *testing.T) {
 	h := &fakeHandle{}
 	code := Run([]string{"start"}, e.deps(func(d *Deps) {
 		d.StartRunner = func(_ context.Context, c runner.Config) (runner.Handle, error) {
-			go func() { c.OnUnauthorized(); c.OnUnauthorized() }() // idempotent
+			go func() { c.OnUnauthorized(nil); c.OnUnauthorized(nil) }() // idempotent
 			return h, nil
 		}
 	}))

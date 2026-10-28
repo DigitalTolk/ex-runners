@@ -14,8 +14,9 @@ jobs:
     uses: ./.github/workflows/ci-checks.yml
 
   build:
-    # Every release target must keep compiling — one static binary per
-    # OS/arch, no runtime to install.
+    # Every release target must keep compiling. Linux and Windows are
+    # static binaries cross-built here; macOS (cgo, Secure Enclave) builds
+    # in build-darwin.
     name: Build
     needs: checks
     runs-on: ubuntu-latest
@@ -27,11 +28,32 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Cross-compile release targets
-        run: make release
+      - name: Cross-compile linux + windows
+        run: make release-other
 
       - name: Smoke test
         run: |
           make build
           ./dist/ex-runner --version
           ./dist/ex-runner help
+
+  build-darwin:
+    name: Build (macOS)
+    needs: checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build darwin/arm64 + darwin/amd64
+        run: make release-darwin
+
+      - name: Smoke test
+        run: |
+          tar -xzf release/*-darwin-arm64.tar.gz -C release
+          ./release/*-darwin-arm64/ex-runner --version
+          ./release/*-darwin-arm64/ex-runner help

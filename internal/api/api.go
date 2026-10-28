@@ -27,11 +27,40 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Message }
 
+// Error codes of the runner's device-key proof (see Prover).
+const (
+	// CodeClockSkew: the proof's timestamp is too far from the server's
+	// clock. The token is fine; the runner says so and retries like after
+	// any transient error.
+	CodeClockSkew = "runner_clock_skew"
+	// CodeUpgradeRequired: the server only accepts runners whose sign-in is
+	// locked to a device key, and this one's isn't.
+	CodeUpgradeRequired = "runner_upgrade_required"
+)
+
 // IsUnauthorized reports whether err is the server rejecting the runner
-// token (revoked, expired, or the account deactivated).
+// token (revoked, expired, or the account deactivated). A clock-skew 401 is
+// not: the token is still good.
 func IsUnauthorized(err error) bool {
 	var e *Error
-	return errors.As(err, &e) && e.Status == http.StatusUnauthorized
+	return errors.As(err, &e) && e.Status == http.StatusUnauthorized && e.Code != CodeClockSkew
+}
+
+// IsClockSkew reports whether the server refused a request's proof because
+// this computer's clock is off.
+func IsClockSkew(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Status == http.StatusUnauthorized && e.Code == CodeClockSkew
+}
+
+// ClockSkewHint is the line the runner logs on a CodeClockSkew answer.
+const ClockSkewHint = "This computer's clock is more than 10 minutes off — set the correct time; retrying"
+
+// IsUpgradeRequired reports whether the server refused a sign-in that
+// isn't locked to a device key.
+func IsUpgradeRequired(err error) bool {
+	var e *Error
+	return errors.As(err, &e) && e.Status == http.StatusUnauthorized && e.Code == CodeUpgradeRequired
 }
 
 // ErrorFields reads the ex server's error body. The server writes
@@ -83,13 +112,31 @@ type RenewResponse struct {
 	ExpiresAt string `json:"expiresAt"`
 }
 
+// DeviceKey is the public half of this computer's device key, as the
+// server stores it: base64 (standard) SPKI DER of a P-256 key.
+type DeviceKey struct {
+	PublicKey string `json:"publicKey"`
+	Hardware  bool   `json:"hardware"`
+}
+
+// ProofHeader carries a request's device-key signature.
+const ProofHeader = "X-Ex-Runner-Proof"
+
+// Prover signs runner-token requests with the device key (devicekey.Prover).
+type Prover interface {
+	// Proof is the ProofHeader value for one request.
+	Proof(method, path string) (string, error)
+}
+
 // Client talks to one ex server with a runner token. Token is read on
 // every call: the CLI renews it while the runner is live, and each request
-// must carry the CURRENT one.
+// must carry the CURRENT one. With a Prover every request also carries a
+// device-key proof; run-token clients (SetRunStatus) have none.
 type Client struct {
 	BaseURL string
 	Token   func() string
 	HTTP    *http.Client
+	Prover  Prover
 }
 
 // New builds a client with a 30s request timeout — above the server's 20s
@@ -111,6 +158,13 @@ func (c *Client) call(ctx context.Context, method, path string, body, out any) e
 	}
 	req.Header.Set("Authorization", "Bearer "+c.Token())
 	req.Header.Set("Content-Type", "application/json")
+	if c.Prover != nil {
+		proof, err := c.Prover.Proof(method, req.URL.Path)
+		if err != nil {
+			return fmt.Errorf("sign request with this computer's device key: %w", err)
+		}
+		req.Header.Set(ProofHeader, proof)
+	}
 	res, err := c.HTTP.Do(req)
 	if err != nil {
 		return err

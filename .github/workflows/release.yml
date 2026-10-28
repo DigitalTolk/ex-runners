@@ -12,8 +12,32 @@ jobs:
     name: Checks
     uses: ./.github/workflows/ci-checks.yml
 
-  release:
-    name: Build + GitHub Release
+  # macOS binaries use cgo for the Secure Enclave, so they build on a Mac.
+  # No code signing: the enclave key needs no entitlement.
+  build-darwin:
+    name: Build (macOS)
+    needs: checks
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Build darwin/arm64 + darwin/amd64
+        run: make release-darwin VERSION=${GITHUB_REF_NAME#v}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-darwin
+          path: release/*.tar.gz
+          if-no-files-found: error
+
+  # Everything else is a static CGO_ENABLED=0 binary.
+  build-other:
+    name: Build (Linux, Windows)
     needs: checks
     runs-on: ubuntu-latest
     steps:
@@ -24,9 +48,33 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      # One static binary per OS/arch, plus SHA256SUMS.
-      - name: Cross-compile
-        run: make release VERSION=${GITHUB_REF_NAME#v}
+      - name: Cross-compile linux + windows
+        run: make release-other VERSION=${GITHUB_REF_NAME#v}
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-other
+          path: release/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: GitHub Release
+    needs: [build-darwin, build-other]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Both halves land in release/, then one SHA256SUMS covers all six.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: release-*
+          path: release
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          test "$(ls release/*.tar.gz | wc -l)" -eq 6
+          make release-sums
 
       - name: Create release
         uses: softprops/action-gh-release@v3
