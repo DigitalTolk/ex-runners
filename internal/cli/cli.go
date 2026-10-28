@@ -7,7 +7,9 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"strings"
@@ -15,6 +17,7 @@ import (
 	"time"
 
 	"github.com/DigitalTolk/ex-runners/internal/api"
+	"github.com/DigitalTolk/ex-runners/internal/devicekey"
 	"github.com/DigitalTolk/ex-runners/internal/runner"
 )
 
@@ -68,8 +71,53 @@ const (
 )
 
 func disconnected(server string) string {
-	return "This runner was disconnected — it was removed on the Runners page, its account was deactivated, or its sign-in expired.\n" +
+	return "This runner was disconnected — it was removed on the Runners page, its account was deactivated, its sign-in expired, " +
+		"or ex disconnected it for safety because its sign-in was used from another computer.\n" +
 		"Connect it again with: ex-runner login " + server
+}
+
+func upgradeRequired(server string) string {
+	return "ex only accepts runners whose sign-in is locked to the computer they run on, and this one's isn't.\n" +
+		"Update ex-runner to the latest version, then connect it again with: ex-runner login " + server
+}
+
+func deviceKeyLost(server, why string) string {
+	return "This runner's sign-in is locked to a device key this computer can't use (" + why + ").\n" +
+		"Connect it again with: ex-runner login " + server
+}
+
+// lostAuth explains a 401 that ends the runner.
+func lostAuth(server string, err error) string {
+	if api.IsUpgradeRequired(err) {
+		return upgradeRequired(server)
+	}
+	return disconnected(server)
+}
+
+// newDeviceKey makes this computer's device key: in the Secure Enclave when
+// there is one, in software otherwise (a seam: tests use software keys).
+var newDeviceKey = devicekey.New
+
+// loadDeviceKey reads device-key.json; (nil, nil) when there is none.
+func loadDeviceKey(home string) (*devicekey.Key, error) {
+	k, err := devicekey.Load(deviceKeyPath(home))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	return k, err
+}
+
+// keyKind is the device key as status reports it: "hardware", "software",
+// or "" for none. Never the key itself.
+func keyKind(k *devicekey.Key) string {
+	switch {
+	case k == nil:
+		return ""
+	case k.Hardware():
+		return "hardware"
+	default:
+		return "software"
+	}
 }
 
 func (d *Deps) withDefaults() {
@@ -135,10 +183,15 @@ func Run(argv []string, d Deps) int {
 	}
 }
 
-func (d *Deps) client(server, token string) *api.Client {
-	c := api.New(server, func() string { return token })
-	c.HTTP = d.HTTP
-	return c
+// client talks to c's server with its token, signing with key when there
+// is one.
+func (d *Deps) client(c *Credentials, key *devicekey.Key) *api.Client {
+	cl := api.New(c.Server, func() string { return c.Token })
+	cl.HTTP = d.HTTP
+	if key != nil {
+		cl.Prover = devicekey.NewProver(key, c.TokenID, d.Now)
+	}
+	return cl
 }
 
 // parseArgs splits a command's arguments into the flags it knows (plus
@@ -181,6 +234,17 @@ func cmdLogin(arg string, noBrowser bool, d *Deps) int {
 	}
 	file := credentialsPath(d.Home)
 	previous, hadPrevious := loadCredentials(file)
+	// The key the previous sign-in is locked to: retiring that token below
+	// must be signed with it, or the server reads the revoke as a stolen
+	// token.
+	previousKey, _ := loadDeviceKey(d.Home)
+	// A fresh key for every sign-in, made here in ex-runner (also under
+	// `--no-browser`, when the desktop app drives the login).
+	key, err := newDeviceKey(d.Now())
+	if err != nil {
+		d.Err("Couldn't make this computer's device key: " + err.Error())
+		return 1
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go func() {
@@ -196,6 +260,7 @@ func cmdLogin(arg string, noBrowser bool, d *Deps) int {
 		label:       machineLabel(d.Hostname),
 		timeout:     d.LoginTimeout,
 		client:      d.HTTP,
+		deviceKey:   &api.DeviceKey{PublicKey: key.PublicKey(), Hardware: key.Hardware()},
 	})
 	if err != nil {
 		if le, ok := err.(*loginError); ok {
@@ -203,6 +268,10 @@ func cmdLogin(arg string, noBrowser bool, d *Deps) int {
 		} else {
 			d.Err("Sign-in failed: " + err.Error())
 		}
+		return 1
+	}
+	if err := key.Save(deviceKeyPath(d.Home)); err != nil {
+		d.Err("Couldn't save this computer's device key: " + err.Error())
 		return 1
 	}
 	if err := saveCredentials(file, creds); err != nil {
@@ -213,9 +282,14 @@ func cmdLogin(arg string, noBrowser bool, d *Deps) int {
 	// so it doesn't linger on the Runners page. Best effort — it may already
 	// be revoked, expired, or on a server that's gone.
 	if hadPrevious {
-		_ = d.client(previous.Server, previous.Token).Revoke(context.Background())
+		_ = d.client(previous, previousKey).Revoke(context.Background())
 	}
 	d.Out(fmt.Sprintf("Connected as %s on %s. This computer shows as \"%s\" on your Runners page.", creds.User, creds.Server, creds.Label))
+	if key.Hardware() {
+		d.Out("The connection is locked to this Mac's Secure Enclave.")
+	} else {
+		d.Out("The connection is locked to a key on this computer.")
+	}
 	d.Out("Bring your agents online with: ex-runner start")
 	return 0
 }
@@ -231,6 +305,27 @@ func cmdStart(d *Deps) int {
 	if isExpired(creds, d.Now()) {
 		d.Err(disconnected(creds.Server))
 		return 1
+	}
+	// Every request with the runner token is signed with the device key —
+	// the renewals here and the runner's own. The token ID never changes on
+	// renewal, so one prover serves the whole process. A sign-in from before
+	// device keys runs unsigned until the next `ex-runner login`.
+	var prover api.Prover
+	if creds.DeviceKey {
+		key, err := loadDeviceKey(d.Home)
+		if err == nil && key == nil {
+			err = errors.New("device-key.json is missing")
+		}
+		if err == nil {
+			err = key.Check()
+		}
+		if err != nil {
+			d.Err(deviceKeyLost(creds.Server, err.Error()))
+			return 1
+		}
+		prover = devicekey.NewProver(key, creds.TokenID, d.Now)
+	} else {
+		d.Out("This runner's sign-in isn't locked to this computer. To lock it, run: ex-runner login " + creds.Server)
 	}
 	lk, holder, err := acquireLock(lockPath(d.Home), d.PID, d.Alive)
 	if err != nil {
@@ -248,22 +343,23 @@ func cmdStart(d *Deps) int {
 	tokens := newTokenBox(creds)
 	client := api.New(creds.Server, tokens.token)
 	client.HTTP = d.HTTP
+	client.Prover = prover
 
-	// renew answers false only when the server says the token is dead; any
-	// other failure (network, 5xx) keeps the current token and retries on
-	// the next check — it is still valid for days.
-	renew := func() bool {
+	// renew returns an error only when the server says the token is dead;
+	// any other failure (network, 5xx) keeps the current token and retries
+	// on the next check — it is still valid for days.
+	renew := func() error {
 		cur := tokens.get()
 		if !needsRenewal(cur, d.Now()) {
-			return true
+			return nil
 		}
 		fresh, err := client.Renew(context.Background())
 		if err != nil {
 			if api.IsUnauthorized(err) {
-				return false
+				return err
 			}
 			d.Err(fmt.Sprintf("Couldn't renew the runner's sign-in yet (%s); will retry later.", err.Error()))
-			return true
+			return nil
 		}
 		next := *cur
 		next.Token, next.ExpiresAt = fresh.Token, fresh.ExpiresAt
@@ -272,18 +368,20 @@ func cmdStart(d *Deps) int {
 			d.Err("Renewed the runner's sign-in but couldn't save it: " + err.Error())
 		}
 		d.Out(fmt.Sprintf("Renewed this runner's sign-in (valid until %s).", next.ExpiresAt))
-		return true
+		return nil
 	}
-	if !renew() {
-		d.Err(disconnected(creds.Server))
+	if err := renew(); err != nil {
+		d.Err(lostAuth(creds.Server, err))
 		return 1
 	}
 
 	unauthorized := make(chan struct{})
 	var unauthOnce sync.Once
+	var unauthErr error
 	cfg := runner.Config{
 		BaseURL:  creds.Server,
 		Token:    tokens.token,
+		Prover:   prover,
 		StateDir: StateDir(d.Home),
 		MCPEntry: d.MCPEntry,
 		Log: func(msg string, extra map[string]any) {
@@ -293,7 +391,7 @@ func cmdStart(d *Deps) int {
 			}
 			d.Out(line)
 		},
-		OnUnauthorized: func() { unauthOnce.Do(func() { close(unauthorized) }) },
+		OnUnauthorized: func(err error) { unauthOnce.Do(func() { unauthErr = err; close(unauthorized) }) },
 		Version:        d.Version,
 	}
 
@@ -306,10 +404,14 @@ func cmdStart(d *Deps) int {
 			break
 		}
 		if api.IsUnauthorized(err) {
-			d.Err(disconnected(creds.Server))
+			d.Err(lostAuth(creds.Server, err))
 			return 1
 		}
-		d.Err(fmt.Sprintf("Can't reach %s yet (%s); retrying in %s.", creds.Server, err.Error(), seconds(delay)))
+		if api.IsClockSkew(err) {
+			d.Err(fmt.Sprintf("%s in %s.", api.ClockSkewHint, seconds(delay)))
+		} else {
+			d.Err(fmt.Sprintf("Can't reach %s yet (%s); retrying in %s.", creds.Server, err.Error(), seconds(delay)))
+		}
 		select {
 		case <-d.Shutdown:
 			return 0
@@ -324,9 +426,11 @@ func cmdStart(d *Deps) int {
 	for {
 		select {
 		case <-ticker.C:
-			renew()
+			// A dead token also fails the runner's next claim, which ends
+			// the process through OnUnauthorized.
+			_ = renew()
 		case <-unauthorized:
-			d.Err(disconnected(creds.Server))
+			d.Err(lostAuth(creds.Server, unauthErr))
 			handle.Stop("")
 			return 1
 		case <-d.Shutdown:
@@ -357,11 +461,27 @@ func cmdStatus(d *Deps) int {
 	} else {
 		d.Out(fmt.Sprintf("Sign-in:  valid until %s (renews automatically while running)", creds.ExpiresAt))
 	}
+	d.Out("Locked:   " + lockedTo(creds, d.Home))
 	d.Out("Home:     " + d.Home)
 	if expired {
 		return 1
 	}
 	return 0
+}
+
+// lockedTo describes what the sign-in is locked to, for `status`.
+func lockedTo(creds *Credentials, home string) string {
+	key, _ := loadDeviceKey(home)
+	switch kind := keyKind(key); {
+	case !creds.DeviceKey:
+		return "no — to lock it to this computer, run: ex-runner login " + creds.Server
+	case kind == "hardware":
+		return "this Mac's Secure Enclave"
+	case kind == "software":
+		return "a key on this computer"
+	default:
+		return "a device key that is missing here — run: ex-runner login " + creds.Server
+	}
 }
 
 // statusJSON is `ex-runner status --json`: what a program driving the runner
@@ -376,6 +496,9 @@ type statusJSON struct {
 	TokenID   string `json:"tokenId,omitempty"`
 	ExpiresAt string `json:"expiresAt,omitempty"`
 	Expired   bool   `json:"expired"`
+	// DeviceKey is what the sign-in is locked to: "hardware" (Secure
+	// Enclave), "software", or "" (none). Never the key itself.
+	DeviceKey string `json:"deviceKey"`
 	// Running is whether a runner holds this home's lock, and its pid.
 	Running bool `json:"running"`
 	PID     int  `json:"pid,omitempty"`
@@ -388,6 +511,10 @@ func cmdStatusJSON(d *Deps) int {
 		st.Connected = true
 		st.Server, st.User, st.Label, st.TokenID, st.ExpiresAt = creds.Server, creds.User, creds.Label, creds.TokenID, creds.ExpiresAt
 		st.Expired = isExpired(creds, d.Now())
+		if creds.DeviceKey {
+			key, _ := loadDeviceKey(d.Home)
+			st.DeviceKey = keyKind(key)
+		}
 	}
 	if pid := readPid(lockPath(d.Home)); pid > 0 && d.Alive(pid) {
 		st.Running, st.PID = true, pid
@@ -400,12 +527,15 @@ func cmdStatusJSON(d *Deps) int {
 func cmdLogout(d *Deps) int {
 	file := credentialsPath(d.Home)
 	creds, ok := loadCredentials(file)
+	key, _ := loadDeviceKey(d.Home)
+	// The device key goes with the sign-in, whatever the server says.
+	defer func() { _ = devicekey.Remove(deviceKeyPath(d.Home)) }()
 	if !ok {
 		removeCredentials(file) // clear an unreadable leftover, if any
 		d.Out("Not connected — nothing to do.")
 		return 0
 	}
-	if err := d.client(creds.Server, creds.Token).Revoke(context.Background()); err != nil && !api.IsUnauthorized(err) {
+	if err := d.client(creds, key).Revoke(context.Background()); err != nil && !api.IsUnauthorized(err) {
 		removeCredentials(file)
 		d.Err(fmt.Sprintf("Couldn't reach %s to disconnect this runner (%s). Its token is forgotten here — remove \"%s\" on the Runners page to finish.",
 			creds.Server, err.Error(), creds.Label))

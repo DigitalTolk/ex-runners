@@ -18,6 +18,7 @@ func sampleCreds(over func(c *Credentials)) *Credentials {
 		Label:     "mac",
 		User:      "Alice",
 		ExpiresAt: t0.Add(20 * 24 * time.Hour).Format(time.RFC3339Nano),
+		DeviceKey: true,
 	}
 	if over != nil {
 		over(c)

@@ -41,6 +41,14 @@ the browser is useless on its own.
 This computer now appears on the **Runners** page in ex. Removing it there
 disconnects it right away.
 
+Login also makes a key that belongs to this computer and registers its public
+half with the token. Every request the runner makes is signed with it, so a
+copied `credentials.json` is useless anywhere else. On a Mac the key lives in
+the Secure Enclave: only a wrapped copy, usable by this Mac alone, is saved,
+and nothing is added to the Keychain. Elsewhere it is a key file only you can
+read. A runner signed in with an older ex-runner keeps working unlocked; run
+`ex-runner login` again to lock it.
+
 ## Run it
 
 ```sh
@@ -54,14 +62,14 @@ between tries.
 The first Ctrl-C stops the agents running here and fails their runs with a
 clear message in chat. A second Ctrl-C quits immediately.
 
-Tokens last 30 days. A running ex-runner renews its token automatically during
-the last week before it expires.
+Tokens last 7 days. A running ex-runner renews its token automatically during
+the last 3 days before it expires.
 
 ## Other commands
 
 ```sh
 ex-runner status          # server, account, machine name, token expiry
-ex-runner status --json   # the same plus whether a runner is running, as JSON (never the token)
+ex-runner status --json   # the same plus whether a runner is running, as JSON (never the token or key)
 ex-runner logout          # disconnect this computer and delete its token
 ex-runner login --no-browser <server-url>   # print the connect link instead of opening it
 ```
@@ -76,6 +84,7 @@ All files live in `$EX_RUNNER_HOME`, which defaults to `~/.ex-runner`:
 | Path               | What                                                    |
 | ------------------ | ------------------------------------------------------- |
 | `credentials.json` | Server, account and runner token (readable only by you) |
+| `device-key.json`  | This computer's key (Secure Enclave blob or software key; readable only by you) |
 | `state/`           | Runner ID, warm-session pins, per-thread work folders   |
 | `runner.pid`       | Stops a second runner from starting on this computer    |
 
@@ -99,9 +108,12 @@ from your real one.
 
 ### Releasing
 
-Push a `vX.Y.Z` tag. The release workflow runs the checks, cross-compiles one
-binary per platform into `ex-runner-X.Y.Z-<os>-<arch>.tar.gz`, and attaches
-them to a GitHub Release with a `SHA256SUMS` file.
+Push a `vX.Y.Z` tag. The release workflow runs the checks, builds one binary
+per platform into `ex-runner-X.Y.Z-<os>-<arch>.tar.gz`, and attaches them to a
+GitHub Release with a `SHA256SUMS` file. The macOS binaries use cgo for the
+Secure Enclave and build on a macOS runner (`make release-darwin`); Linux and
+Windows are static binaries built on Linux (`make release-other`). On a Mac,
+`make release` builds all six.
 
 ### Code layout
 
@@ -116,3 +128,4 @@ them to a GitHub Release with a `SHA256SUMS` file.
 | `internal/taskpolicy`    | Which commands a coding task may run without asking                    |
 | `internal/secretpaths`   | Credential locations agents never reach without a human (or at all, for Codex) |
 | `internal/connectors`, `internal/connectordocs` | Connector credentials, docs sync and lookup         |
+| `internal/devicekey`     | This computer's key (Secure Enclave or software) and request proofs     |

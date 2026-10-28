@@ -27,6 +27,7 @@ type fakeServer struct {
 type call struct {
 	method, path, auth string
 	body               map[string]any
+	proof              string // X-Ex-Runner-Proof
 }
 
 func newFakeServer(t *testing.T) *fakeServer {
@@ -36,7 +37,7 @@ func newFakeServer(t *testing.T) *fakeServer {
 		var body map[string]any
 		_ = json.Unmarshal(raw, &body)
 		f.mu.Lock()
-		f.calls = append(f.calls, call{r.Method, r.URL.Path, r.Header.Get("Authorization"), body})
+		f.calls = append(f.calls, call{r.Method, r.URL.Path, r.Header.Get("Authorization"), body, r.Header.Get("X-Ex-Runner-Proof")})
 		answer := f.answers[r.URL.Path]
 		f.mu.Unlock()
 		status, resp := 200, "{}"

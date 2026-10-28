@@ -112,7 +112,7 @@ func exchangeServer(t *testing.T, status int, body string) *httptest.Server {
 func TestExchangeCode(t *testing.T) {
 	ctx := context.Background()
 	ok := exchangeServer(t, 200, `{"token":"t","id":"rt1","label":"mac","expiresAt":"2026-11-04T00:00:00Z","userName":"Alice"}`)
-	res, err := exchangeCode(ctx, http.DefaultClient, ok.URL, "c", "v")
+	res, err := exchangeCode(ctx, http.DefaultClient, ok.URL, "c", "v", nil)
 	if err != nil || res.ID != "rt1" || res.UserName != "Alice" {
 		t.Fatalf("exchange = %+v %v", res, err)
 	}
@@ -126,19 +126,19 @@ func TestExchangeCode(t *testing.T) {
 		{502, `not json`, "Sign-in failed: the server answered 502."},
 	}
 	for _, c := range cases {
-		_, err := exchangeCode(ctx, http.DefaultClient, exchangeServer(t, c.status, c.body).URL, "c", "v")
+		_, err := exchangeCode(ctx, http.DefaultClient, exchangeServer(t, c.status, c.body).URL, "c", "v", nil)
 		var le *loginError
 		if !errors.As(err, &le) || le.Error() != c.want {
 			t.Errorf("%d: err = %v", c.status, err)
 		}
 	}
-	if _, err := exchangeCode(ctx, http.DefaultClient, exchangeServer(t, 200, `{bad`).URL, "c", "v"); err == nil {
+	if _, err := exchangeCode(ctx, http.DefaultClient, exchangeServer(t, 200, `{bad`).URL, "c", "v", nil); err == nil {
 		t.Error("expected decode error")
 	}
-	if _, err := exchangeCode(ctx, http.DefaultClient, "http://127.0.0.1:1", "c", "v"); err == nil {
+	if _, err := exchangeCode(ctx, http.DefaultClient, "http://127.0.0.1:1", "c", "v", nil); err == nil {
 		t.Error("expected transport error")
 	}
-	if _, err := exchangeCode(ctx, http.DefaultClient, "http://bad host", "c", "v"); err == nil {
+	if _, err := exchangeCode(ctx, http.DefaultClient, "http://bad host", "c", "v", nil); err == nil {
 		t.Error("expected request error")
 	}
 }

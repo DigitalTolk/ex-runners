@@ -118,6 +118,7 @@ func Start(ctx context.Context, cfg Config) (Handle, error) {
 		identity.Harnesses = append(identity.Harnesses, h.RunnerHarness)
 	}
 	client := api.New(cfg.BaseURL, cfg.Token)
+	client.Prover = cfg.Prover
 	reg, err := client.Register(ctx, identity)
 	if err != nil {
 		return nil, err
@@ -242,11 +243,15 @@ func (r *liveRunner) claimLoop() {
 				r.mu.Unlock()
 				r.cancel()
 				if r.cfg.OnUnauthorized != nil {
-					r.cfg.OnUnauthorized()
+					r.cfg.OnUnauthorized(err)
 				}
 				return
 			}
-			r.log("claim failed; backing off", map[string]any{"error": err.Error()})
+			if api.IsClockSkew(err) {
+				r.log(api.ClockSkewHint, nil)
+			} else {
+				r.log("claim failed; backing off", map[string]any{"error": err.Error()})
+			}
 			if !r.sleep(claimBackoff) {
 				return
 			}

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DigitalTolk/ex-runners/internal/api"
 	"github.com/DigitalTolk/ex-runners/internal/detect"
 	"github.com/DigitalTolk/ex-runners/internal/harness"
 	"github.com/DigitalTolk/ex-runners/internal/protocol"
@@ -49,7 +50,12 @@ func claimQueue(f *fakeServer, queue ...protocol.Assignment) {
 	})
 }
 
-func startRunner(t *testing.T, f *fakeServer, onUnauth func()) Handle {
+func startRunner(t *testing.T, f *fakeServer, onUnauth func(error)) Handle {
+	t.Helper()
+	return startRunnerWith(t, f, onUnauth, nil)
+}
+
+func startRunnerWith(t *testing.T, f *fakeServer, onUnauth func(error), prover api.Prover) Handle {
 	t.Helper()
 	f.on("/api/v1/agent/runner/register", func(map[string]any) (int, string) {
 		return 200, `{"runnerID":"x","agents":[{"id":"a-gg","displayName":"gg","slug":"gg"}],"leaseSec":60}`
@@ -59,6 +65,7 @@ func startRunner(t *testing.T, f *fakeServer, onUnauth func()) Handle {
 	h, err := Start(context.Background(), Config{
 		BaseURL:  f.srv.URL,
 		Token:    func() string { return "runner-tok" },
+		Prover:   prover,
 		StateDir: t.TempDir(),
 		MCPEntry: MCPEntry{Command: "/opt/ex-runner", Args: []string{"mcp-server"}},
 		Log: func(msg string, _ map[string]any) {
@@ -102,6 +109,33 @@ func TestLoopClaimsExecutesAndStops(t *testing.T) {
 	r.Stop("")
 }
 
+// staticProver signs every request with the same marker.
+type staticProver struct{}
+
+func (staticProver) Proof(method, path string) (string, error) { return "v1.1." + method + path, nil }
+
+func TestRunnerRequestsCarryTheDeviceProof(t *testing.T) {
+	h := &fakeHarness{script: []func(harness.EventSink, *fakeRun, harness.RunOptions){succeed("4")}}
+	withLoopSeams(t, h)
+	f := newFakeServer(t)
+	claimQueue(f, assignment(nil))
+	r := startRunnerWith(t, f, nil, staticProver{})
+	eventually(t, "the run to complete", func() bool { return len(f.callsTo("/api/v1/agent/runner/runs/run1/complete")) == 1 })
+	eventually(t, "a heartbeat", func() bool { return len(f.callsTo("/api/v1/agent/runner/heartbeat")) > 0 })
+	r.Stop("")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.calls {
+		runToken := strings.HasPrefix(c.path, "/api/v1/agent/run/")
+		if want := "v1.1." + c.method + c.path; !runToken && c.proof != want {
+			t.Errorf("%s: proof = %q", c.path, c.proof)
+		}
+		if runToken && c.proof != "" {
+			t.Errorf("run-token call %s carries a runner proof", c.path)
+		}
+	}
+}
+
 func TestServerKillAndShutdownKill(t *testing.T) {
 	hang := func(harness.EventSink, *fakeRun, harness.RunOptions) {}
 	h := &fakeHarness{script: []func(harness.EventSink, *fakeRun, harness.RunOptions){hang, hang}}
@@ -143,23 +177,31 @@ func TestLoopStopsOnUnauthorizedAndBacksOff(t *testing.T) {
 		mu.Lock()
 		defer mu.Unlock()
 		calls++
-		if calls == 1 {
+		switch calls {
+		case 1:
 			return 500, `{}` // transient: backed off and retried
+		case 2:
+			// This computer's clock is off: the token is fine, so it's
+			// retried like any transient error.
+			return 401, `{"error":{"code":"runner_clock_skew","message":"clock skew"}}`
 		}
 		return 401, `{"error":{"code":"runner_disconnected","message":"runner: this runner was disconnected"}}`
 	})
 	f.on("/api/v1/agent/runner/heartbeat", func(map[string]any) (int, string) { return 500, `{}` })
-	lost := make(chan struct{})
-	r := startRunner(t, f, func() { close(lost) })
+	lost := make(chan error, 1)
+	r := startRunner(t, f, func(err error) { lost <- err })
 	select {
-	case <-lost:
+	case err := <-lost:
+		if !api.IsUnauthorized(err) {
+			t.Errorf("OnUnauthorized got %v", err)
+		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("OnUnauthorized never called")
 	}
 	r.Stop("")
 	mu.Lock()
 	defer mu.Unlock()
-	if calls != 2 {
+	if calls != 3 {
 		t.Errorf("claim calls = %d", calls)
 	}
 }

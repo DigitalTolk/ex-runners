@@ -172,9 +172,14 @@ type exchangeResponse struct {
 	UserName  string `json:"userName"`
 }
 
-// exchangeCode redeems the one-time code for the runner token.
-func exchangeCode(ctx context.Context, client *http.Client, server, code, verifier string) (*exchangeResponse, error) {
-	body, _ := json.Marshal(map[string]string{"code": code, "verifier": verifier})
+// exchangeCode redeems the one-time code for the runner token, registering
+// this computer's device key with it.
+func exchangeCode(ctx context.Context, client *http.Client, server, code, verifier string, key *api.DeviceKey) (*exchangeResponse, error) {
+	fields := map[string]any{"code": code, "verifier": verifier}
+	if key != nil {
+		fields["deviceKey"] = key
+	}
+	body, _ := json.Marshal(fields) // strings and a plain struct always marshal
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/api/v1/runner-tokens/exchange", bytes.NewReader(body))
 	if err != nil {
 		return nil, err
@@ -209,6 +214,7 @@ type loginDeps struct {
 	label       string
 	timeout     time.Duration
 	client      *http.Client
+	deviceKey   *api.DeviceKey
 }
 
 func login(ctx context.Context, server string, d loginDeps) (*Credentials, error) {
@@ -244,7 +250,7 @@ func login(ctx context.Context, server string, d loginDeps) (*Credentials, error
 		}
 		return nil, &loginError{"Sign-in was cancelled in the browser. Nothing was connected."}
 	}
-	tok, err := exchangeCode(ctx, d.client, server, outcome.code, verifier)
+	tok, err := exchangeCode(ctx, d.client, server, outcome.code, verifier, d.deviceKey)
 	if err != nil {
 		return nil, err
 	}
@@ -255,5 +261,6 @@ func login(ctx context.Context, server string, d loginDeps) (*Credentials, error
 		Label:     tok.Label,
 		User:      tok.UserName,
 		ExpiresAt: tok.ExpiresAt,
+		DeviceKey: d.deviceKey != nil,
 	}, nil
 }

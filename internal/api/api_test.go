@@ -2,14 +2,21 @@ package api
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/DigitalTolk/ex-runners/internal/devicekey"
 	"github.com/DigitalTolk/ex-runners/internal/protocol"
 )
 
@@ -215,5 +222,79 @@ func TestSetRunStatus(t *testing.T) {
 	}
 	if err := SetRunStatus(context.Background(), "http://127.0.0.1:1", "t", "x"); err == nil {
 		t.Fatal("expected a transport error")
+	}
+}
+
+// failingProver has a key that can't sign.
+type failingProver struct{}
+
+func (failingProver) Proof(string, string) (string, error) { return "", errors.New("no enclave") }
+
+func TestEveryRunnerCallCarriesTheProof(t *testing.T) {
+	var proofs []string
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		proofs = append(proofs, r.Header.Get(ProofHeader))
+		paths = append(paths, r.URL.Path)
+		_, _ = io.WriteString(w, `{}`)
+	}))
+	defer srv.Close()
+	key, _ := devicekey.NewSoftware(time.Now())
+	c := New(srv.URL, fixed("tok"))
+	c.Prover = devicekey.NewProver(key, "rt1", time.Now)
+	ctx := context.Background()
+	_, _ = c.Register(ctx, id)
+	_, _ = c.Claim(ctx, id, 1, 20)
+	_, _ = c.Heartbeat(ctx, id, nil)
+	_, _ = c.Events(ctx, "r1", "run9", nil)
+	_ = c.Complete(ctx, "r1", "run9", "", protocol.Usage{})
+	_ = c.Fail(ctx, "r1", "run9", "x")
+	_, _ = c.Renew(ctx)
+	_ = c.Revoke(ctx)
+	if len(proofs) != 8 {
+		t.Fatalf("calls = %d", len(proofs))
+	}
+	pub, _ := base64.StdEncoding.DecodeString(key.PublicKey())
+	pk, _ := x509.ParsePKIXPublicKey(pub)
+	for i, proof := range proofs {
+		parts := strings.Split(proof, ".")
+		if len(parts) != 3 || parts[0] != "v1" {
+			t.Fatalf("%s: proof = %q", paths[i], proof)
+		}
+		ts, _ := strconv.ParseInt(parts[1], 10, 64)
+		sig, _ := base64.RawURLEncoding.DecodeString(parts[2])
+		sum := sha256.Sum256(devicekey.Message("POST", paths[i], ts, "rt1"))
+		if !ecdsa.VerifyASN1(pk.(*ecdsa.PublicKey), sum[:], sig) {
+			t.Errorf("%s: signature doesn't verify", paths[i])
+		}
+	}
+
+	// A key that can't sign: nothing is sent.
+	proofs = nil
+	c.Prover = failingProver{}
+	if _, err := c.Heartbeat(ctx, id, nil); err == nil || !strings.Contains(err.Error(), "device key: no enclave") || len(proofs) != 0 {
+		t.Errorf("sign failure = %v (%d sent)", err, len(proofs))
+	}
+
+	// Run-token calls never carry a proof.
+	var header string
+	srv2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { header = r.Header.Get(ProofHeader) + "|" + r.URL.Path }))
+	defer srv2.Close()
+	if err := SetRunStatus(ctx, srv2.URL, "run-tok", "x"); err != nil || header != "|/api/v1/agent/run/state" {
+		t.Errorf("run-token call = %q, %v", header, err)
+	}
+}
+
+func TestProofRefusals(t *testing.T) {
+	srv, _ := serve(t, 401, `{"error":{"code":"runner_upgrade_required","message":"update ex-runner"}}`)
+	_, err := New(srv.URL, fixed("tok")).Heartbeat(context.Background(), id, nil)
+	if !IsUpgradeRequired(err) || !IsUnauthorized(err) || IsClockSkew(err) || IsUpgradeRequired(errors.New("x")) {
+		t.Errorf("upgrade required = %v", err)
+	}
+	// A clock-skew answer is not a dead token: the runner retries.
+	srv2, _ := serve(t, 401, `{"error":{"code":"runner_clock_skew","message":"clock skew"}}`)
+	_, err = New(srv2.URL, fixed("tok")).Heartbeat(context.Background(), id, nil)
+	if !IsClockSkew(err) || IsUnauthorized(err) || IsUpgradeRequired(err) || IsClockSkew(errors.New("x")) {
+		t.Errorf("clock skew = %v", err)
 	}
 }
